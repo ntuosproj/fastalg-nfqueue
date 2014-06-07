@@ -32,8 +32,9 @@ AC_TYPE_UINT32_T
 # Checks for library functions.
 AC_FUNC_STRERROR_R
 
-# Enable GNU functions
-AC_DEFINE([_GNU_SOURCE], [1], [Enable GNU functions])
+# Enable additional POSIX features
+AC_DEFINE([_POSIX_C_SOURCE], [200809L], [Enable POSIX.1-2008 support])
+AC_DEFINE([_XOPEN_SOURCE], [700], [Enable X/OPEN system interfaces])
 
 PKG_CHECK_MODULES(GLIB, [glib-2.0])
 PKG_CHECK_MODULES(NETFILTER, [libmnl libnetfilter_queue >= 1.0.0])
