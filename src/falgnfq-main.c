@@ -65,7 +65,7 @@ int main (int argc, char *argv[]) {
     }
 
     loop = falgnfq_loop_new (config);
-    if (config == NULL) {
+    if (loop == NULL) {
         exit (1);
     }
 
