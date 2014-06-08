@@ -150,6 +150,7 @@ FalgnfqConfig* falgnfq_config_new_from_arg (
         } else {
             config->maps[maps_ok].param = argv[i];
         }
+        config->maps[maps_ok].param_len = strlen (argv[i]);
     }
     config->maps[maps_ok].param = NULL;
 

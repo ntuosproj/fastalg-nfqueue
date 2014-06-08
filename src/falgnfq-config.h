@@ -12,6 +12,7 @@
 typedef struct falgnfq_map {
     uint32_t    mark;
     char*       param;
+    size_t      param_len;
     bool        dup;
 } FalgnfqMap;
 

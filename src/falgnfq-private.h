@@ -14,16 +14,16 @@
 #ifndef NDEBUG
 # define debug(...)      \
     if (!falgnfq_ndebug) { \
-        message_with_prefix ("DEBUG: ", __VA_ARGS__); \
+        message_with_prefix ("DEBUG:    ", __VA_ARGS__); \
     }
 #else
 # define debug(...)
 #endif
 
 #define message(...)     printf (__VA_ARGS__); putchar ('\n')
-#define warning(...)     message_with_prefix ("\033[1;33mWARNING\033[m: ", __VA_ARGS__)
+#define warning(...)     message_with_prefix ("\033[1;33mWARNING\033[m:  ", __VA_ARGS__)
 #define critical(...)    message_with_prefix ("\033[1;33mCRITICAL\033[m: ", __VA_ARGS__)
-#define error(...)       message_with_prefix ("\033[1;31mERROR\033[m: ", __VA_ARGS__)
+#define error(...)       message_with_prefix ("\033[1;31mERROR\033[m:    ", __VA_ARGS__)
 
 extern int falgnfq_ndebug;
 
