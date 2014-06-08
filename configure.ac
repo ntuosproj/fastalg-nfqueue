@@ -32,14 +32,37 @@ AC_TYPE_UINT32_T
 # Checks for library functions.
 AC_FUNC_STRERROR_R
 
-# Enable additional POSIX features
+# Enable additional POSIX features.
 AC_DEFINE([_POSIX_C_SOURCE], [200809L], [Enable POSIX.1-2008 support])
 AC_DEFINE([_XOPEN_SOURCE], [700], [Enable X/OPEN system interfaces])
 AC_DEFINE([_BSD_SOURCE], [1], [Workaround annoying glibc feature tests])
 
+# Checks for required libraries.
 PKG_CHECK_MODULES(GLIB, [glib-2.0])
-PKG_CHECK_MODULES(NETFILTER, [libmnl libnetfilter_queue >= 1.0.0])
+PKG_CHECK_MODULES(NETFILTER, [libmnl libnetfilter_queue >= 1.0.2])
 PKG_CHECK_MODULES(FALGPROTO, [falgproto-0.1])
+
+# Checks for libnetfilter_queue GSO handling features.
+for libnetfilter_queue_gso_constant in \
+    NFQA_CAP_LEN NFQA_SKB_INFO NFQA_SKB_GSO NFQA_CFG_F_GSO; do
+
+    AC_CHECK_DECL([${libnetfilter_queue_gso_constant}],,
+        [libnetfilter_queue_support_gso=no; break;],
+        [
+#include <stdint.h>
+#include <libnetfilter_queue/libnetfilter_queue.h>
+#include <libnetfilter_queue/linux_nfnetlink_queue.h>
+        ])
+done
+if test x${libnetfilter_queue_support_gso} '!=' xno; then
+    AC_DEFINE([HAVE_LIBNETFILTER_QUEUE_GSO], [1],
+        [Define to 1 if libnetfilter_queue supports GSO packet handling])
+else
+    echo ''
+    echo '  WARNING: GSO packets handling support is DISABLED!'
+    echo '  Please update your libnetfilter_queue if you needs it.'
+    echo ''
+fi
 
 AC_CONFIG_FILES([Makefile])
 AC_OUTPUT

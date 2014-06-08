@@ -17,6 +17,7 @@
 #include <libnetfilter_queue/libnetfilter_queue_ipv6.h>
 #include <libnetfilter_queue/libnetfilter_queue_tcp.h>
 #include <libnetfilter_queue/libnetfilter_queue_udp.h>
+#include <libnetfilter_queue/linux_nfnetlink_queue.h>
 #include <linux/netfilter.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -59,7 +60,7 @@ static int queue_verdict (FalgnfqLoop *loop, uint32_t id, uint32_t mark) {
     nlh = queue_pkt_init (pkt, NFQNL_MSG_VERDICT, loop->config->queue_num);
     nfq_nlmsg_verdict_put (nlh, id, NF_REPEAT);
     nfq_nlmsg_verdict_put_mark (nlh, mark);
-    
+
     if (mnl_socket_sendto (loop->nl, nlh, nlh->nlmsg_len) < 0) {
         error ("%s: mnl_socket_sendto: %s\n", __func__, ERRMSG);
         return -1;
@@ -110,6 +111,7 @@ static int queue_cb (const struct nlmsghdr *nlh, void *loop_generic) {
     pkt_len = mnl_attr_get_payload_len (attr[NFQA_PAYLOAD]);
     pkt_payload = mnl_attr_get_payload (attr[NFQA_PAYLOAD]);
 
+#ifdef HAVE_LIBNETFILTER_QUEUE_GSO
     if (attr[NFQA_CAP_LEN]) {
         debug ("  packet id %" PRIu32 ", cap_len %" PRIu32, pkt_id, cap_len);
         if (pkt_len != cap_len) {
@@ -143,6 +145,7 @@ static int queue_cb (const struct nlmsghdr *nlh, void *loop_generic) {
     } else {
         skbinfo = 0;
     }
+#endif
 
     // TODO: inspect packet content
     
@@ -186,9 +189,17 @@ FalgnfqLoop* falgnfq_loop_new (FalgnfqConfig *config) {
     nlh = queue_pkt_init (pkt, NFQNL_MSG_CONFIG, config->queue_num);
     nfq_nlmsg_cfg_put_params (nlh, NFQNL_COPY_PACKET, pkt_inet_max);
     mnl_attr_put_u32 (nlh, NFQA_CFG_FLAGS,
-        htonl (NFQA_CFG_F_GSO | NFQA_CFG_F_UID_GID | NFQA_CFG_F_CONNTRACK));
+        htonl (
+#ifdef HAVE_LIBNETFILTER_QUEUE_GSO
+            NFQA_CFG_F_GSO |
+#endif
+            NFQA_CFG_F_CONNTRACK));
     mnl_attr_put_u32 (nlh, NFQA_CFG_MASK,
-        htonl (NFQA_CFG_F_GSO | NFQA_CFG_F_UID_GID | NFQA_CFG_F_CONNTRACK));
+        htonl (
+#ifdef HAVE_LIBNETFILTER_QUEUE_GSO
+            NFQA_CFG_F_GSO |
+#endif
+            NFQA_CFG_F_CONNTRACK));
     if (mnl_socket_sendto(nl, nlh, nlh->nlmsg_len) < 0) {
         error ("mnl_socket_sendto: NFQA_CFG_FLAGS: %s\n", ERRMSG);
         return NULL;
