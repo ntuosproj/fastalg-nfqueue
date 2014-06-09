@@ -16,7 +16,6 @@
         char* g_error = g_strdup_printf (__VA_ARGS__); \
         *error = strdup (g_error); \
         g_free (g_error); \
-        return NULL; \
     }
 
 #define IPV4_RECOMMENDED    "ipv4"

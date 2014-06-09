@@ -131,8 +131,8 @@ static void* udp_get_payload (struct udphdr *udph, struct pkt_buff *pktb) {
     }
 
     /* packet is too short. */
-    char *transport_header = pktb_transport_header (pktb);
-    char *tail = pktb_data (pktb) + pktb_len (pktb);
+    uint8_t *transport_header = pktb_transport_header (pktb);
+    uint8_t *tail = pktb_data (pktb) + pktb_len (pktb);
     if (transport_header + pkt_len > tail) {
         return NULL;
     }
@@ -176,7 +176,7 @@ static int udp_inspect (
     }
 
     if (param.param && loop->proto.matcher) {
-        debug ("  %s: param is %*s", __func__, param.len, param.param);
+        debug ("  %s: param is %*s", __func__, (int)(param.len), param.param);
         for (size_t i = 0; i < loop->config->maps_len; i++) {
             if (loop->proto.matcher (param.param, param.len,
                 loop->config->maps[i].param,
@@ -268,7 +268,8 @@ static int queue_cb (const struct nlmsghdr *nlh, void *loop_generic) {
      */
     struct pkt_buff *pktb = pktb_alloc (AF_INET, pkt_payload, pkt_len, 0);
     if (pktb == NULL) {
-        error ("  packet id %" PRIu32 ", cannot allocate pkt_buff: %s", ERRMSG);
+        error ("  packet id %" PRIu32 ", cannot allocate pkt_buff: %s",
+            pkt_id, ERRMSG);
         return MNL_CB_ERROR;
     }
 
@@ -316,7 +317,7 @@ static int queue_cb (const struct nlmsghdr *nlh, void *loop_generic) {
         } break;
 
         default:
-            error ("  packet id %" PRIu32 ", unknown layer 3 protocol");
+            error ("  packet id %" PRIu32 ", unknown layer 3 protocol", pkt_id);
             goto free_pktb;
     }
 
@@ -356,7 +357,7 @@ static int queue_cb (const struct nlmsghdr *nlh, void *loop_generic) {
         } break;
 
         default:
-            error ("  packet id %" PRIu32 ", unknown layer 4 protocol");
+            error ("  packet id %" PRIu32 ", unknown layer 4 protocol", pkt_id);
             goto free_pktb;
     }
 
