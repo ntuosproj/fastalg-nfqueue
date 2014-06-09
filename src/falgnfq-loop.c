@@ -393,7 +393,7 @@ FalgnfqLoop* falgnfq_loop_new (FalgnfqConfig *config) {
     struct nlmsghdr *nlh;
 
     // bind to the queue
-    nlh = queue_pkt_init (pkt, NFQNL_MSG_CONFIG, 0);
+    nlh = queue_pkt_init (pkt, NFQNL_MSG_CONFIG, config->queue_num);
     nfq_nlmsg_cfg_put_cmd(nlh, config->family, NFQNL_CFG_CMD_BIND);
     if (mnl_socket_sendto(nl, nlh, nlh->nlmsg_len) < 0) {
         error ("mnl_socket_sendto: NFQNL_CFG_CMD_BIND: %s\n", ERRMSG);
