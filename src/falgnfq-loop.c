@@ -93,7 +93,7 @@ static int before_get_param (char *payload, size_t len,
 
     debug ("  %s: %zu bytes of payload", caller_name, len);
 
-    if (!falgnfq_ndebug) {
+    if_debug {
         if (loop->proto.printer == NULL) {
             warning ("  %s: application layer data printer or debugger "
                 "is not available", caller_name);
@@ -290,7 +290,7 @@ static int queue_cb (const struct nlmsghdr *nlh, void *loop_generic) {
                 iph->protocol == IPPROTO_UDP ? "layer 4 is UDP" :
                 "unknown layer 4 protocol");
 
-            if (!falgnfq_ndebug) {
+            if_debug {
                 char print_buf[2048];
                 nfq_ip_snprintf (print_buf, 2048, iph);
                 debug ("  packet id %" PRIu32 ", %s", pkt_id, print_buf);
@@ -309,7 +309,7 @@ static int queue_cb (const struct nlmsghdr *nlh, void *loop_generic) {
                 error ("  packet id %" PRIu32 ", truncated IPv6 packet", pkt_id);
             }
 
-            if (!falgnfq_ndebug) {
+            if_debug {
                 char print_buf[2048];
                 nfq_ip6_snprintf (print_buf, 2048, ip6h);
                 debug ("  packet id %" PRIu32 ", %s", pkt_id, print_buf);
@@ -331,7 +331,7 @@ static int queue_cb (const struct nlmsghdr *nlh, void *loop_generic) {
                 goto free_pktb;
             }
 
-            if (!falgnfq_ndebug) {
+            if_debug {
                 char print_buf[2048];
                 nfq_tcp_snprintf (print_buf, 2048, th);
                 debug ("  packet id %" PRIu32 ", %s", pkt_id, print_buf);
@@ -347,7 +347,7 @@ static int queue_cb (const struct nlmsghdr *nlh, void *loop_generic) {
                 goto free_pktb;
             }
 
-            if (!falgnfq_ndebug) {
+            if_debug {
                 char print_buf[2048];
                 nfq_udp_snprintf (print_buf, 2048, uh);
                 debug ("  packet id %" PRIu32 ", %s", pkt_id, print_buf);
@@ -462,7 +462,7 @@ int falgnfq_loop_run (FalgnfqLoop *loop) {
         debug ("FalgnfqLoop %p run: mnl_cb_run", loop);
         if (mnl_cb_run (pkt, pkt_len, 0, loop->portid, queue_cb, loop) < 0) {
             error ("mnl_cb_run: %s", ERRMSG);
-            if (!falgnfq_ndebug) {
+            if_debug {
                 error ("DEVELOPER_MODE: UNEXPECTED ERROR, EXIT NOW!");
                 return -1;
             }

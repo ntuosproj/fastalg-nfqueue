@@ -16,8 +16,10 @@
     if (!falgnfq_ndebug) { \
         message_with_prefix ("DEBUG:    ", __VA_ARGS__); \
     }
+# define if_debug        if (!falgnfq_ndebug)
 #else
 # define debug(...)
+# define if_debug        while (0)
 #endif
 
 #define message(...)     printf (__VA_ARGS__); putchar ('\n')
@@ -25,6 +27,8 @@
 #define critical(...)    message_with_prefix ("\033[1;33mCRITICAL\033[m: ", __VA_ARGS__)
 #define error(...)       message_with_prefix ("\033[1;31mERROR\033[m:    ", __VA_ARGS__)
 
+// DO NOT USE this variable directly!
+// Please use above debug and if_debug macro instead.
 extern int falgnfq_ndebug;
 
 
