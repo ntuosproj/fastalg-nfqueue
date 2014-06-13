@@ -141,6 +141,18 @@ static void* udp_get_payload (struct udphdr *udph, struct pkt_buff *pktb) {
     return transport_header + 8;
 }
 
+/* XXX: nfq_udp_get_payload_len is WRONG!
+ *      We have to implement our version of it.
+ *      Why there is so many bugs in libnetfilter_queue?
+ */
+static unsigned int udp_get_payload_len (
+    struct udphdr *udph, struct pkt_buff *pktb) {
+
+    uint8_t *transport_header = pktb_transport_header (pktb);
+    uint8_t *tail = pktb_data (pktb) + pktb_len (pktb);
+    return (tail - transport_header) - 8;
+}
+
 static int udp_inspect (
     struct pkt_buff *pktb, struct udphdr *uh, FalgnfqLoop *loop) {
 
@@ -149,7 +161,7 @@ static int udp_inspect (
         error ("  %s: cannot get UDP packet payload", __func__);
         return loop->config->default_mark;
     }
-    size_t len = nfq_udp_get_payload_len (uh, pktb);
+    size_t len = udp_get_payload_len (uh, pktb);
 
     if (before_get_param (payload, len, loop, __func__) < 0) {
         return loop->config->default_mark;
