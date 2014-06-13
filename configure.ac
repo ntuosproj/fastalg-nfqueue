@@ -64,5 +64,27 @@ else
     echo ''
 fi
 
+# Debug options.
+AC_ARG_ENABLE([debug],
+    [AS_HELP_STRING([--disable-debug],
+    [disable debug functions for improved performance])],
+    [enable_debug="$enableval"], [enable_debug="yes"])
+AS_IF([test x$enable_debug = xno],
+    [AC_DEFINE([NDEBUG], [1], [No debug support])])
+
 AC_CONFIG_FILES([Makefile])
 AC_OUTPUT
+
+echo ""
+echo " Basic configuration:"
+echo "  C compiler ................. $CC"
+echo "  Debug mode ................. $enable_debug"
+echo ""
+echo " Libraries configuration:"
+echo "  GLIB_CFLAGS ................ $GLIB_CFLAGS"
+echo "  GLIB_LIBS .................. $GLIB_LIBS"
+echo "  NETFILTER_CFLAGS ........... $NETFILTER_CFLAGS"
+echo "  NETFILTER_LIBS ............. $NETFILTER_LIBS"
+echo "  FALGPROTO_CFLAGS ........... $FALGPROTO_CFLAGS"
+echo "  FALGPROTO_LIBS ............. $FALGPROTO_LIBS"
+echo ""

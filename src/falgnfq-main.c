@@ -36,9 +36,13 @@ int main (int argc, char *argv[]) {
         name++;
     }
 
+#ifdef NDEBUG
+    falgnfq_ndebug = 1;
+#else
     if (getenv ("NDEBUG")) {
         falgnfq_ndebug = 1;
     }
+#endif
 
     // No argument -> usage()
     if (argc <= 1) {
