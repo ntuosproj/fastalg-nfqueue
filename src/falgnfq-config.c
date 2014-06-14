@@ -20,11 +20,11 @@
 
 #define IPV4_RECOMMENDED    "ipv4"
 static const char *ipv4_value[] =
-    { IPV4_RECOMMENDED, "ip",  "inet",  "AF_INET",  "PF_INET",  NULL };
+    { IPV4_RECOMMENDED, "IPV4",  "ip",  "inet",  "AF_INET",  "PF_INET",  NULL };
 
 #define IPV6_RECOMMENDED    "ipv6"
 static const char *ipv6_value[] =
-    { IPV6_RECOMMENDED, "ip6", "inet6", "AF_INET6", "PF_INET6", NULL };
+    { IPV6_RECOMMENDED, "IPV6", "ip6", "inet6", "AF_INET6", "PF_INET6", NULL };
 
 
 static int parse_number (const char *str, unsigned long *result) {
