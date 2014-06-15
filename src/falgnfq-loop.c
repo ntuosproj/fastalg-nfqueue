@@ -86,6 +86,7 @@ static FalgprotoPacket* packet_list_new (void) {
     list->data = list;
     list->payload = NULL;
     list->len = 0;
+    return list;
 }
 
 static void packet_list_append (
