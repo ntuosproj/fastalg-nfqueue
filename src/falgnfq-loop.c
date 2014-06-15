@@ -10,6 +10,7 @@
 
 #include <arpa/inet.h>
 #include <errno.h>
+#include <glib.h>
 #include <inttypes.h>
 #include <libmnl/libmnl.h>
 #include <libnetfilter_queue/libnetfilter_queue.h>
@@ -48,7 +49,77 @@ struct falgnfq_loop {
     struct mnl_socket*  nl;         // netlink socket
     unsigned            portid;     // (cache) netlink socket portid
     size_t              pkt_max;    // maximal possible netlink packet
+    GHashTable*         pkts;       // a hash table of FalgprotoPacket
 };
+
+/* We only process one transport layer protocol (TCP or UDP), so
+ * using source port and destination port is enough. We encode
+ * the source port and destination port into an integer, so memory
+ * allocation for the hash key is not needed. */
+#define PACKET_KEY(sport,dport) \
+    GUINT_TO_POINTER ((unsigned int)(((uint32_t)dport) * 65536 + sport))
+
+#define PKT_INFO(x) ((struct pkt_info*)(x))
+
+struct pkt_info {
+    uint32_t            id;
+    uint32_t            mark;
+    struct pkt_buff*    pktb;
+};
+
+/* The first item in the list is not used to store packets.
+ * Its only significant field is data, which is used to store
+ * the pointer to the last packet in the list.
+ *
+ * Other items are used to store packets, with data field used
+ * to store the other information using struct pkt_info.
+ */
+#define ITEM_SIZE   (sizeof (FalgprotoPacket) + sizeof (struct pkt_info))
+#define FIRST_PKT(list)   ((list)->next)
+#define LAST_PKT(list)    ((FalgprotoPacket*)((list)->data))
+#define GET_PKT_INFO(x) \
+    (struct pkt_info*)(((char*)(x)) + sizeof (FalgprotoPacket))
+
+static FalgprotoPacket* packet_list_new (void) {
+    FalgprotoPacket *list = g_slice_alloc (ITEM_SIZE);
+    list->next = NULL;
+    list->data = list;
+    list->payload = NULL;
+    list->len = 0;
+}
+
+static void packet_list_append (
+    FalgprotoPacket *head, char *payload, size_t len,
+    uint32_t id, uint32_t mark, struct pkt_buff *pktb) {
+
+    FalgprotoPacket *item = g_slice_alloc (ITEM_SIZE);
+    struct pkt_info *info = GET_PKT_INFO (item);
+
+    info->id = id;
+    info->mark = mark;
+    info->pktb = pktb;
+
+    item->next = NULL;
+    item->data = info;
+    item->payload = payload;
+    item->len = len;
+
+    FalgprotoPacket *last = head->data;
+    last->next = item;
+    head->data = item;
+}
+
+static void packet_list_free (void *head) {
+    FalgprotoPacket *iter = head;
+    FalgprotoPacket *next = iter->next;
+
+    g_slice_free1 (ITEM_SIZE, iter);
+    for (iter = next; iter != NULL; iter = next) {
+        next = iter->next;
+        pktb_free (PKT_INFO (iter->data)->pktb);
+        g_slice_free1 (ITEM_SIZE, iter);
+    }
+}
 
 static struct nlmsghdr* queue_pkt_init (
     char *pkt, uint16_t type, uint32_t queue_num) {
@@ -66,39 +137,42 @@ static struct nlmsghdr* queue_pkt_init (
     return nlh;
 }
 
-static int queue_verdict (FalgnfqLoop *loop, uint32_t id, uint32_t mark) {
+static void queue_verdict (FalgnfqLoop *loop,
+    FalgprotoPacket *list, void *key, uint32_t mark) {
+
     ERRMSG_INIT;
     char pkt[loop->pkt_max];
     struct nlmsghdr *nlh;
 
-    nlh = queue_pkt_init (pkt, NFQNL_MSG_VERDICT, loop->config->queue_num);
-    nfq_nlmsg_verdict_put (nlh, id, NF_REPEAT);
-    nfq_nlmsg_verdict_put_mark (nlh, mark);
+    for (FalgprotoPacket *iter = list->next; iter != NULL; iter = iter->next) {
+        nlh = queue_pkt_init (pkt, NFQNL_MSG_VERDICT, loop->config->queue_num);
+        nfq_nlmsg_verdict_put (nlh, PKT_INFO (iter->data)->id, NF_REPEAT);
+        nfq_nlmsg_verdict_put_mark (nlh, mark);
 
-    if (mnl_socket_sendto (loop->nl, nlh, nlh->nlmsg_len) < 0) {
-        error ("%s: mnl_socket_sendto: %s\n", __func__, ERRMSG);
-        return -1;
+        debug ("  packet id %" PRIu32 ", verdict: set mark = %" PRIu32,
+            PKT_INFO (iter->data)->id, mark);
+
+        if (mnl_socket_sendto (loop->nl, nlh, nlh->nlmsg_len) < 0) {
+            error ("%s: mnl_socket_sendto: %s\n", __func__, ERRMSG);
+        }
     }
-    debug ("  packet id %" PRIu32 ", verdict: set mark = %" PRIu32, id, mark);
 
-    return 0;
+    g_hash_table_remove (loop->pkts, key);
 }
 
 /* TODO: All NULL checks in this function should be removed when
  *       protocol support in fastalg-protocol are completed because
  *       there will be no need to check whether a function is implemented.
  */
-static int before_get_param (char *payload, size_t len,
+static int before_get_param (FalgprotoPacket *pkt,
     FalgnfqLoop *loop, const char *caller_name) {
-
-    debug ("  %s: %zu bytes of payload", caller_name, len);
 
     if_debug {
         if (loop->proto.printer == NULL) {
             warning ("  %s: application layer data printer or debugger "
                 "is not available", caller_name);
         } else {
-            loop->proto.printer (stdout, payload, len);
+            loop->proto.printer (stdout, pkt);
         }
     }
 
@@ -107,15 +181,23 @@ static int before_get_param (char *payload, size_t len,
             caller_name, falgproto_get_description (loop->config->protocol));
         return -1;
     }
+    if (loop->proto.matcher == NULL) {
+        critical ("  %s: no matcher for %s, fallback to default mark",
+            caller_name, falgproto_get_description (loop->config->protocol));
+        return -1;
+    }
 
     return 0;
 }
 
-static int tcp_inspect (
-    struct pkt_buff *pktb, struct tcphdr *th, FalgnfqLoop *loop) {
+static bool tcp_inspect (
+    FalgnfqLoop *loop, struct tcphdr *th,
+    FalgprotoPacket *list, void *key,
+    struct pkt_info info, uint32_t *verdict) {
 
     error ("  %s: function not implemented", __func__);
-    return loop->config->default_mark;
+    *verdict = loop->config->default_mark;
+    return true;
 }
 
 
@@ -154,40 +236,34 @@ static unsigned int udp_get_payload_len (
 }
 
 static int udp_inspect (
-    struct pkt_buff *pktb, struct udphdr *uh, FalgnfqLoop *loop) {
+    FalgnfqLoop *loop, struct udphdr *uh,
+    FalgprotoPacket *list, void *key,
+    struct pkt_info info, uint32_t *verdict) {
 
-    char *payload = udp_get_payload (uh, pktb);
-    if (payload == NULL) {
-        error ("  %s: cannot get UDP packet payload", __func__);
-        return loop->config->default_mark;
+    char *payload = udp_get_payload (uh, info.pktb);
+    size_t len = udp_get_payload_len (uh, info.pktb);
+    debug ("  %s: %zu bytes of payload", __func__, len);
+    packet_list_append (list, payload, len, info.id, info.mark, info.pktb);
+
+    FalgprotoPacket *pkt = FIRST_PKT (list);
+    if (before_get_param (pkt, loop, __func__) < 0) {
+        *verdict = loop->config->default_mark;
+        return true;
     }
-    size_t len = udp_get_payload_len (uh, pktb);
 
-    if (before_get_param (payload, len, loop, __func__) < 0) {
-        return loop->config->default_mark;
+    FalgprotoParam param = loop->proto.param_getter (pkt);
+
+    if (param.result < 0) {
+        error ("  %s: error while getting param from the packet", __func__);
+        *verdict = loop->config->default_mark;
+        return true;
+    } else if (param.result > 0) {
+        debug ("  %s: incomplete data, waiting for the next packet", __func__);
+        return false;
     }
 
-    FalgprotoParam param = loop->proto.param_getter (payload, len);
     uint32_t mark = loop->config->default_mark;
-    switch (param.result) {
-        case FALGPROTO_PARAM_RESULT_ERROR:
-            error ("  %s: error while getting param from the packet", __func__);
-            break;
-
-        case FALGPROTO_PARAM_RESULT_OK:
-            break;
-
-        // XXX: We assume one packet contains all needed data
-        case FALGPROTO_PARAM_RESULT_NOT_FOUND:
-        case FALGPROTO_PARAM_RESULT_TRUNCATED:
-            error ("  %s: param not found in this packet", __func__);
-            break;
-
-        default:
-            error ("  %s: unknown error", __func__);
-    }
-
-    if (param.param && loop->proto.matcher) {
+    if (param.param) {
         debug ("  %s: param is %*s", __func__, (int)(param.len), param.param);
         for (size_t i = 0; i < loop->config->maps_len; i++) {
             if (loop->proto.matcher (param.param, param.len,
@@ -207,7 +283,8 @@ static int udp_inspect (
         free (param.param);
     }
 
-    return mark;
+    *verdict = mark;
+    return true;
 }
 
 static int queue_cb (const struct nlmsghdr *nlh, void *loop_generic) {
@@ -333,8 +410,16 @@ static int queue_cb (const struct nlmsghdr *nlh, void *loop_generic) {
             goto free_pktb;
     }
 
+    // make the info struct
+    struct pkt_info info = {
+        .id = pkt_id,
+        .mark = pkt_mark,
+        .pktb = pktb
+    };
+
     // get transport layer header, inspect data, and make verdict
     uint32_t verdict;
+    void *key;
     switch (loop->proto.transport) {
         case FALGPROTO_TRANSPORT_TCP: {
             struct tcphdr *th = nfq_tcp_get_hdr (pktb);
@@ -349,7 +434,19 @@ static int queue_cb (const struct nlmsghdr *nlh, void *loop_generic) {
                 debug ("  packet id %" PRIu32 ", %s", pkt_id, print_buf);
             }
 
-            verdict = tcp_inspect (pktb, th, loop);
+            key = PACKET_KEY (ntohs (th->source), ntohs (th->dest));
+            FalgprotoPacket *list = g_hash_table_lookup (loop->pkts, key);
+            if (list == NULL) {
+                list = packet_list_new ();
+                g_hash_table_insert (loop->pkts, key, list);
+            }
+
+            if (!tcp_inspect (loop, th, list, key, info, &verdict)) {
+                debug ("  packet id %" PRIu32 ", saved in the list", pkt_id);
+                return MNL_CB_OK;
+            }
+
+            queue_verdict (loop, list, key, verdict);
         } break;
 
         case FALGPROTO_TRANSPORT_UDP: {
@@ -365,17 +462,25 @@ static int queue_cb (const struct nlmsghdr *nlh, void *loop_generic) {
                 debug ("  packet id %" PRIu32 ", %s", pkt_id, print_buf);
             }
 
-            verdict = udp_inspect (pktb, uh, loop);
+            key = PACKET_KEY (ntohs (uh->source), ntohs (uh->dest));
+            FalgprotoPacket *list = g_hash_table_lookup (loop->pkts, key);
+            if (list == NULL) {
+                list = packet_list_new ();
+                g_hash_table_insert (loop->pkts, key, list);
+            }
+
+            if (!udp_inspect (loop, uh, list, key, info, &verdict)) {
+                debug ("  packet id %" PRIu32 ", saved in the list", pkt_id);
+                return MNL_CB_OK;
+            }
+
+            queue_verdict (loop, list, key, verdict);
         } break;
 
         default:
             error ("  packet id %" PRIu32 ", unknown layer 4 protocol", pkt_id);
             goto free_pktb;
     }
-
-    // send verdict
-    pktb_free (pktb);
-    queue_verdict (loop, pkt_id, verdict);
 
     return MNL_CB_OK;
 
@@ -448,6 +553,8 @@ FalgnfqLoop* falgnfq_loop_new (FalgnfqConfig *config) {
     loop->nl = nl;
     loop->portid = mnl_socket_get_portid (nl);
     loop->pkt_max = pkt_max;
+    loop->pkts = g_hash_table_new_full (
+        g_direct_hash, g_direct_equal, NULL, packet_list_free);
 
     debug ("FalgnfqLoop new -> %p", loop);
 
@@ -487,5 +594,6 @@ int falgnfq_loop_run (FalgnfqLoop *loop) {
 void falgnfq_loop_free (FalgnfqLoop *loop) {
     debug ("FalgnfqLoop %p free", loop);
     mnl_socket_close (loop->nl);
+    g_hash_table_destroy (loop->pkts);
     free (loop);
 }

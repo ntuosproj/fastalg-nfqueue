@@ -40,7 +40,7 @@ AC_DEFINE([_BSD_SOURCE], [1], [Workaround annoying glibc feature tests])
 # Checks for required libraries.
 PKG_CHECK_MODULES(GLIB, [glib-2.0])
 PKG_CHECK_MODULES(NETFILTER, [libmnl libnetfilter_queue >= 1.0.2])
-PKG_CHECK_MODULES(FALGPROTO, [falgproto-0.1 >= 0.1.1])
+PKG_CHECK_MODULES(FALGPROTO, [falgproto-0.1 >= 0.1.2])
 
 # Checks for libnetfilter_queue GSO handling features.
 for libnetfilter_queue_gso_constant in \
