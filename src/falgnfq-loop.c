@@ -566,12 +566,20 @@ int falgnfq_loop_run (FalgnfqLoop *loop) {
     char pkt[loop->pkt_max];
 
     debug ("FalgnfqLoop %p run", loop);
+#ifndef NDEBUG
     while (!falgnfq_exit) {
+#else
+    while (true) {
+#endif
         debug ("FalgnfqLoop %p run: mnl_socket_recvfrom", loop);
         ssize_t pkt_len = mnl_socket_recvfrom (loop->nl, pkt, loop->pkt_max);
         if (pkt_len < 0) {
             if (errno == ENOBUFS) {
                 warning ("mnl_socket_recvfrom: %s", ERRMSG);
+                continue;
+            } else if (errno == EINTR || errno == EWOULDBLOCK) {
+                debug ("FalnfqLoop %p: mnl_socket_recvfrom interrupted", loop);
+                continue;
             } else {
                 error ("mnl_socket_recvfrom: %s", ERRMSG);
                 return -1;

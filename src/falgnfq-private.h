@@ -34,7 +34,7 @@ extern int falgnfq_ndebug;
 
 // Exit
 
-extern int falgnfq_exit;
+extern volatile int falgnfq_exit;
 
 
 // Error message (thread-safe)

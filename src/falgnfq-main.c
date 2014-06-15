@@ -6,6 +6,7 @@
 #include "falgnfq-private.h"
 
 #include <locale.h>
+#include <signal.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -14,7 +15,11 @@
 
 
 int falgnfq_ndebug;
-int falgnfq_exit;
+volatile int falgnfq_exit;
+
+static void falgnfq_exit_setter (int signo) {
+    falgnfq_exit = 1;
+}
 
 static void usage (const char* name) {
     printf (
@@ -42,6 +47,12 @@ int main (int argc, char *argv[]) {
     if (getenv ("NDEBUG")) {
         falgnfq_ndebug = 1;
     }
+
+    struct sigaction sa_int;
+    sa_int.sa_handler = falgnfq_exit_setter;
+    sa_int.sa_flags = 0;
+    sigemptyset (&sa_int.sa_mask);
+    sigaction (SIGINT, &sa_int, NULL);
 #endif
 
     // No argument -> usage()
