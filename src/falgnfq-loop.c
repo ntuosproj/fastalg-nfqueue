@@ -4,6 +4,7 @@
 #include "falgnfq-config.h"
 #include "falgnfq-loop.h"
 #include "falgnfq-private.h"
+#include "falgnfq-dump.h"
 
 // XXX: Workaround buggy libnetfilter_queue header file
 #define nfq_ip6hdr_snprintf nfq_ip6_snprintf
@@ -329,6 +330,15 @@ static int queue_cb (const struct nlmsghdr *nlh, void *loop_generic) {
     pkt_len = mnl_attr_get_payload_len (attr[NFQA_PAYLOAD]);
     pkt_payload = mnl_attr_get_payload (attr[NFQA_PAYLOAD]);
 
+    if_debug {
+        char dump_file[50]= {0};
+        snprintf(dump_file, 50, "packet_%" PRIu32 "_dumpfile", pkt_id);
+        if(falgnfq_dump_payload(dump_file, pkt_payload, pkt_len) == pkt_len){
+            debug ("  packet id %" PRIu32 ", payload dumped.", pkt_id);
+        }else{
+            error ("  packet id %" PRIu32 ", payload not correctly dumped.", pkt_id);
+        }
+    }
 #ifdef HAVE_LIBNETFILTER_QUEUE_GSO
     if (attr[NFQA_CAP_LEN]) {
         debug ("  packet id %" PRIu32 ", cap_len %" PRIu32, pkt_id, cap_len);

@@ -15,6 +15,8 @@ src_fastalg_nfqueue_SOURCES = \
 	src/falgnfq-config.c	\
 	src/falgnfq-loop.h	\
 	src/falgnfq-loop.c	\
+	src/falgnfq-dump.h	\
+	src/falgnfq-dump.c      \
 	$(NULL)
 
 src_fastalg_nfqueue_CFLAGS = \
