@@ -26,22 +26,22 @@ int falgnfq_dump_payload(
 	char buf_offset = 0;
 	char current_byte;
 	int i = 0, j = 0;
-	
+
 
 	char cwd[ MAX_PATH_LEN ] = {0};
 	getcwd(cwd, MAX_PATH_LEN - 1 );
 	sprintf(dump_dir_path, "%s/%s", cwd, "falgnfq-dump-dir");
-	
+
 	//create a dir "falgnfq-dump-dir" under current working directory
 	struct stat st = {0};
 	if(stat(dump_dir_path, &st) == -1){
 		mkdir(dump_dir_path, 0700);
 	}
-	
+
 	//create a dump file under "falgnfq-dump-dir"
 	sprintf(dump_file_path, "%s/%s", dump_dir_path, filename);
 	FILE* fp= fopen( dump_file_path, "w" );
-	
+
 	for(dumped = 0; (len - dumped)/4 > 0 ; dumped += 4){
 		//4 bytes in a line
 		buf_offset = 0;
@@ -62,7 +62,7 @@ int falgnfq_dump_payload(
 			}
 		}
 	}
-	if( len - dumped > 0){	
+	if( len - dumped > 0){
 		buf_offset = 0;
 		for( ; len - dumped > 0; dumped++ ){
 			current_byte = payload[ dumped ];
