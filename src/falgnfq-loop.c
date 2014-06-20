@@ -124,7 +124,7 @@ static void packet_list_free (void *head) {
 }
 
 static struct nlmsghdr* queue_pkt_init (
-    char *pkt, uint16_t type, uint32_t queue_num) {
+    char *pkt, uint16_t type, uint16_t queue_num) {
 
     struct nlmsghdr *nlh = mnl_nlmsg_put_header (pkt);
     nlh->nlmsg_type = (NFNL_SUBSYS_QUEUE << 8) | type;
