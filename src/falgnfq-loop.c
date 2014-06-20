@@ -6,8 +6,12 @@
 #include "falgnfq-private.h"
 #include "falgnfq-dump.h"
 
-// XXX: Workaround buggy libnetfilter_queue header file
-#define nfq_ip6hdr_snprintf nfq_ip6_snprintf
+#define LIBNETFILTER_IS_VERY_BUGGY
+
+// XXX: Workaround buggy libnetfilter_queue functions
+#ifdef LIBNETFILTER_IS_VERY_BUGGY
+# define nfq_ip6hdr_snprintf    nfq_ip6_snprintf
+#endif // LIBNETFILTER_IS_VERY_BUGGY
 
 #include <arpa/inet.h>
 #include <errno.h>
@@ -29,6 +33,13 @@
 #include <netinet/udp.h>
 #include <stdint.h>
 #include <stdlib.h>
+
+// XXX: Workaround buggy libnetfilter_queue functions
+#ifdef LIBNETFILTER_IS_VERY_BUGGY
+# define nfq_udp_get_payload        udp_get_payload
+# define nfq_udp_get_payload_len    udp_get_payload_len
+# define nfq_ip_snprintf            ip_snprintf
+#endif // LIBNETFILTER_IS_VERY_BUGGY
 
 // Casting macros
 #define IPHDR(x)    ((struct iphdr*)(x))
@@ -193,6 +204,8 @@ static int before_get_param (FalgprotoPacket *pkt,
 }
 
 
+#ifdef LIBNETFILTER_IS_VERY_BUGGY
+
 /* XXX: libnetfilter_queue contains many buggy functions, so we have to write
  *      our correct version and use them instead.
  *      Not all bugs have been reported to the upstream. Here is the upstream
@@ -253,6 +266,9 @@ static int ip_snprintf (
                      iph->protocol);
 }
 
+#endif // LIBNETFILTER_IS_VERY_BUGGY
+
+
 static bool tcp_inspect (
     FalgnfqLoop *loop, struct tcphdr *th,
     FalgprotoPacket *list, void *key,
@@ -268,8 +284,8 @@ static bool udp_inspect (
     FalgprotoPacket *list, void *key,
     struct pkt_info info, uint32_t *verdict) {
 
-    char *payload = udp_get_payload (uh, info.pktb);
-    size_t len = udp_get_payload_len (uh, info.pktb);
+    char *payload = nfq_udp_get_payload (uh, info.pktb);
+    size_t len = nfq_udp_get_payload_len (uh, info.pktb);
     debug ("  %s: %zu bytes of payload", __func__, len);
     packet_list_append (list, payload, len, info.id, info.mark, info.pktb);
     if (payload == NULL) {
@@ -427,7 +443,7 @@ static int queue_cb (const struct nlmsghdr *nlh, void *loop_generic) {
 
             if_debug (1) {
                 char print_buf[2048];
-                ip_snprintf (print_buf, 2048, iph);
+                nfq_ip_snprintf (print_buf, 2048, iph);
                 debug ("  packet id %" PRIu32 ", %s", pkt_id, print_buf);
             }
         } break;
