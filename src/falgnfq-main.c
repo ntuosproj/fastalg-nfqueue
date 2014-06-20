@@ -14,7 +14,7 @@
 #include <time.h>
 
 
-int falgnfq_ndebug;
+unsigned int falgnfq_debug;
 volatile int falgnfq_exit;
 
 static void falgnfq_exit_setter (int signo) {
@@ -42,10 +42,23 @@ int main (int argc, char *argv[]) {
     }
 
 #ifdef NDEBUG
-    falgnfq_ndebug = 1;
+    falgnfq_debug = 0;
 #else
     if (getenv ("NDEBUG")) {
-        falgnfq_ndebug = 1;
+        falgnfq_debug = 0;
+    } else {
+        char *debug_level_str = getenv ("FALGNFQ_DEBUG");
+        if (debug_level_str) {
+            int debug_level = atoi (debug_level_str);
+            falgnfq_debug = debug_level < 0 ? 1 : (unsigned int)debug_level;
+        } else {
+            falgnfq_debug = 1;
+        }
+
+        debug (" ::: DEVELOPER_MODE :::");
+        debug ("Set NDEBUG in your environment to suppress all debug meesage");
+        debug ("Use FALGNFQ_DEBUG to set the debug level");
+        debug ("Current debug level is %u", falgnfq_debug);
     }
 
     struct sigaction sa_int;

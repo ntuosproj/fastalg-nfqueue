@@ -13,13 +13,13 @@
 
 #ifndef NDEBUG
 # define debug(...)      \
-    if (!falgnfq_ndebug) { \
+    if (falgnfq_debug) { \
         message_with_prefix ("DEBUG:    ", __VA_ARGS__); \
     }
-# define if_debug        if (!falgnfq_ndebug)
+# define if_debug(level) if (falgnfq_debug >= (level))
 #else
 # define debug(...)
-# define if_debug        while (0)
+# define if_debug(level) if (0)
 #endif
 
 #define message(...)     printf (__VA_ARGS__); putchar ('\n')
@@ -29,7 +29,7 @@
 
 // DO NOT USE this variable directly!
 // Please use above debug and if_debug macro instead.
-extern int falgnfq_ndebug;
+extern unsigned int falgnfq_debug;
 
 
 // Exit

@@ -169,7 +169,7 @@ static void queue_verdict (FalgnfqLoop *loop,
 static int before_get_param (FalgprotoPacket *pkt,
     FalgnfqLoop *loop, const char *caller_name) {
 
-    if_debug {
+    if_debug (1) {
         if (loop->proto.printer == NULL) {
             warning ("  %s: application layer data printer or debugger "
                 "is not available", caller_name);
@@ -362,7 +362,7 @@ static int queue_cb (const struct nlmsghdr *nlh, void *loop_generic) {
     pkt_len = mnl_attr_get_payload_len (attr[NFQA_PAYLOAD]);
     pkt_payload = mnl_attr_get_payload (attr[NFQA_PAYLOAD]);
 
-    if_debug {
+    if_debug (2) {
         char dump_file[50]= {0};
         snprintf(dump_file, 50, "packet_%" PRIu32 "_dumpfile", pkt_id);
         if(falgnfq_dump_payload(dump_file, pkt_payload, pkt_len) == pkt_len){
@@ -425,7 +425,7 @@ static int queue_cb (const struct nlmsghdr *nlh, void *loop_generic) {
                 iph->protocol == IPPROTO_ICMPV6 ? "layer 4 is ICMPv6" :
                 "unknown layer 4 protocol");
 
-            if_debug {
+            if_debug (1) {
                 char print_buf[2048];
                 ip_snprintf (print_buf, 2048, iph);
                 debug ("  packet id %" PRIu32 ", %s", pkt_id, print_buf);
@@ -444,7 +444,7 @@ static int queue_cb (const struct nlmsghdr *nlh, void *loop_generic) {
                 error ("  packet id %" PRIu32 ", truncated IPv6 packet", pkt_id);
             }
 
-            if_debug {
+            if_debug (1) {
                 char print_buf[2048];
                 nfq_ip6_snprintf (print_buf, 2048, ip6h);
                 debug ("  packet id %" PRIu32 ", %s", pkt_id, print_buf);
@@ -474,7 +474,7 @@ static int queue_cb (const struct nlmsghdr *nlh, void *loop_generic) {
                 goto free_pktb;
             }
 
-            if_debug {
+            if_debug (1) {
                 char print_buf[2048];
                 nfq_tcp_snprintf (print_buf, 2048, th);
                 debug ("  packet id %" PRIu32 ", %s", pkt_id, print_buf);
@@ -502,7 +502,7 @@ static int queue_cb (const struct nlmsghdr *nlh, void *loop_generic) {
                 goto free_pktb;
             }
 
-            if_debug {
+            if_debug (1) {
                 char print_buf[2048];
                 nfq_udp_snprintf (print_buf, 2048, uh);
                 debug ("  packet id %" PRIu32 ", %s", pkt_id, print_buf);
@@ -636,7 +636,7 @@ int falgnfq_loop_run (FalgnfqLoop *loop) {
         debug ("FalgnfqLoop %p run: mnl_cb_run", loop);
         if (mnl_cb_run (pkt, pkt_len, 0, loop->portid, queue_cb, loop) < 0) {
             error ("mnl_cb_run: %s", ERRMSG);
-            if_debug {
+            if_debug (1) {
                 error ("DEVELOPER_MODE: UNEXPECTED ERROR, EXIT NOW!");
                 return -1;
             }
