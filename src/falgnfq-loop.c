@@ -237,7 +237,7 @@ static unsigned int udp_get_payload_len (
     return (unsigned int)(tail - transport_header) - 8;
 }
 
-static int udp_inspect (
+static bool udp_inspect (
     FalgnfqLoop *loop, struct udphdr *uh,
     FalgprotoPacket *list, void *key,
     struct pkt_info info, uint32_t *verdict) {
@@ -246,6 +246,12 @@ static int udp_inspect (
     size_t len = udp_get_payload_len (uh, info.pktb);
     debug ("  %s: %zu bytes of payload", __func__, len);
     packet_list_append (list, payload, len, info.id, info.mark, info.pktb);
+    if (payload == NULL) {
+        warning ("  %s: this is not a valid UDP packet!", __func__);
+        warning ("  %s: please check your ip/nftables settings", __func__);
+        *verdict = loop->config->default_mark;
+        return true;
+    }
 
     FalgprotoPacket *pkt = FIRST_PKT (list);
     if (before_get_param (pkt, loop, __func__) < 0) {
