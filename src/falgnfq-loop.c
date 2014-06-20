@@ -341,6 +341,7 @@ static int queue_cb (const struct nlmsghdr *nlh, void *loop_generic) {
     }
 #ifdef HAVE_LIBNETFILTER_QUEUE_GSO
     if (attr[NFQA_CAP_LEN]) {
+        cap_len = ntohl (mnl_attr_get_u32 (attr[NFQA_CAP_LEN]));
         debug ("  packet id %" PRIu32 ", cap_len %" PRIu32, pkt_id, cap_len);
         if (pkt_len != cap_len) {
             warning ("  packet id %" PRIu32 " may be truncated!", pkt_id);
