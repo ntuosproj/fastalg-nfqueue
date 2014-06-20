@@ -395,6 +395,8 @@ static int queue_cb (const struct nlmsghdr *nlh, void *loop_generic) {
             debug ("  packet id %" PRIu32 ", %s", pkt_id,
                 iph->protocol == IPPROTO_TCP ? "layer 4 is TCP" :
                 iph->protocol == IPPROTO_UDP ? "layer 4 is UDP" :
+                iph->protocol == IPPROTO_ICMP ? "layer 4 is ICMP" :
+                iph->protocol == IPPROTO_ICMPV6 ? "layer 4 is ICMPv6" :
                 "unknown layer 4 protocol");
 
             if_debug {
