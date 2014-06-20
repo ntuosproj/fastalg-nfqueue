@@ -192,16 +192,12 @@ static int before_get_param (FalgprotoPacket *pkt,
     return 0;
 }
 
-static bool tcp_inspect (
-    FalgnfqLoop *loop, struct tcphdr *th,
-    FalgprotoPacket *list, void *key,
-    struct pkt_info info, uint32_t *verdict) {
 
-    error ("  %s: function not implemented", __func__);
-    *verdict = loop->config->default_mark;
-    return true;
-}
-
+/* XXX: libnetfilter_queue contains many buggy functions, so we have to write
+ *      our correct version and use them instead.
+ *      Not all bugs have been reported to the upstream. Here is the upstream
+ *      bugzilla: http://bugzilla.netfilter.org/.
+ */
 
 /* XXX: nfq_udp_get_payload does not work at all. Its implementation is WRONG!
  *      Therefore, we implement our version udp_get_payload.
@@ -235,6 +231,36 @@ static unsigned int udp_get_payload_len (
     uint8_t *transport_header = pktb_transport_header (pktb);
     uint8_t *tail = pktb_data (pktb) + pktb_len (pktb);
     return (unsigned int)(tail - transport_header) - 8;
+}
+
+/* XXX: nfq_ip_snprintf uses inet_ntoa, but its usage is WRONG!
+ *      We implement our version using inet_ntop instead.
+ */
+static int ip_snprintf (
+    char *buf, size_t size, const struct iphdr *iph) {
+
+    char src[INET_ADDRSTRLEN];
+    char dst[INET_ADDRSTRLEN];
+
+    inet_ntop (AF_INET, &iph->saddr, src, INET_ADDRSTRLEN);
+    inet_ntop (AF_INET, &iph->daddr, dst, INET_ADDRSTRLEN);
+
+    return snprintf (buf, size,
+                     "SRC=%s DST=%s LEN=%u TOS=0x%X "
+                     "PREC=0x%X TTL=%u ID=%u PROTO=%u ",
+                     src, dst, ntohs (iph->tot_len), IPTOS_TOS (iph->tos),
+                     IPTOS_PREC (iph->tos), iph->ttl, ntohs (iph->id),
+                     iph->protocol);
+}
+
+static bool tcp_inspect (
+    FalgnfqLoop *loop, struct tcphdr *th,
+    FalgprotoPacket *list, void *key,
+    struct pkt_info info, uint32_t *verdict) {
+
+    error ("  %s: function not implemented", __func__);
+    *verdict = loop->config->default_mark;
+    return true;
 }
 
 static bool udp_inspect (
@@ -401,7 +427,7 @@ static int queue_cb (const struct nlmsghdr *nlh, void *loop_generic) {
 
             if_debug {
                 char print_buf[2048];
-                nfq_ip_snprintf (print_buf, 2048, iph);
+                ip_snprintf (print_buf, 2048, iph);
                 debug ("  packet id %" PRIu32 ", %s", pkt_id, print_buf);
             }
         } break;
