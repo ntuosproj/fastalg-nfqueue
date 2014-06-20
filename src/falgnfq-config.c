@@ -101,7 +101,7 @@ FalgnfqConfig* falgnfq_config_new_from_arg (
         set_error ("Queue number `%s\' is not a number", argv[2]);
         goto free_nothing;
     } else {
-        queue_num = queue_num_ulong;
+        queue_num = (uint16_t)queue_num_ulong;
     }
 
     int protocol = falgproto_get_protocol (argv[3]);
@@ -116,10 +116,10 @@ FalgnfqConfig* falgnfq_config_new_from_arg (
         set_error ("Default mark `%s\' is not a number", argv[4]);
         goto free_nothing;
     } else {
-        default_mark = default_mark_ulong;
+        default_mark = (uint32_t)default_mark_ulong;
     }
 
-    size_t maps_len = (argc - 4) / 2;
+    size_t maps_len = ((unsigned int)argc - 4) / 2;
     size_t maps_ok = 0;
     FalgnfqConfig *config = malloc (
         sizeof (FalgnfqConfig) + sizeof (FalgnfqMap) * (maps_len + 1));
@@ -141,7 +141,7 @@ FalgnfqConfig* falgnfq_config_new_from_arg (
             set_error ("Mark `%s\' is not a number", argv[i + 1]);
             goto free_maps;
         }
-        config->maps[maps_ok].mark = mark_ulong;
+        config->maps[maps_ok].mark = (uint32_t)mark_ulong;
         config->maps[maps_ok].dup = param_dup;
 
         if (param_dup) {

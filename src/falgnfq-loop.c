@@ -148,7 +148,7 @@ static void queue_verdict (FalgnfqLoop *loop,
 
     for (FalgprotoPacket *iter = list->next; iter != NULL; iter = iter->next) {
         nlh = queue_pkt_init (pkt, NFQNL_MSG_VERDICT, loop->config->queue_num);
-        nfq_nlmsg_verdict_put (nlh, PKT_INFO (iter->data)->id, NF_REPEAT);
+        nfq_nlmsg_verdict_put (nlh, (int)(PKT_INFO (iter->data)->id), NF_REPEAT);
         nfq_nlmsg_verdict_put_mark (nlh, mark);
 
         debug ("  packet id %" PRIu32 ", verdict: set mark = %" PRIu32,
@@ -234,7 +234,7 @@ static unsigned int udp_get_payload_len (
 
     uint8_t *transport_header = pktb_transport_header (pktb);
     uint8_t *tail = pktb_data (pktb) + pktb_len (pktb);
-    return (tail - transport_header) - 8;
+    return (unsigned int)(tail - transport_header) - 8;
 }
 
 static int udp_inspect (
@@ -517,13 +517,13 @@ FalgnfqLoop* falgnfq_loop_new (FalgnfqConfig *config) {
     }
 
     size_t pkt_inet_max = 0xffff;
-    size_t pkt_max = pkt_inet_max + MNL_SOCKET_BUFFER_SIZE;
+    size_t pkt_max = pkt_inet_max + (size_t)(MNL_SOCKET_BUFFER_SIZE);
     char pkt[pkt_max];
     struct nlmsghdr *nlh;
 
     // bind to the queue
     nlh = queue_pkt_init (pkt, NFQNL_MSG_CONFIG, config->queue_num);
-    nfq_nlmsg_cfg_put_cmd(nlh, config->family, NFQNL_CFG_CMD_BIND);
+    nfq_nlmsg_cfg_put_cmd(nlh, (uint16_t)(config->family), NFQNL_CFG_CMD_BIND);
     if (mnl_socket_sendto(nl, nlh, nlh->nlmsg_len) < 0) {
         error ("mnl_socket_sendto: NFQNL_CFG_CMD_BIND: %s\n", ERRMSG);
         return NULL;
@@ -531,7 +531,7 @@ FalgnfqLoop* falgnfq_loop_new (FalgnfqConfig *config) {
 
     // set queue number and options
     nlh = queue_pkt_init (pkt, NFQNL_MSG_CONFIG, config->queue_num);
-    nfq_nlmsg_cfg_put_params (nlh, NFQNL_COPY_PACKET, pkt_inet_max);
+    nfq_nlmsg_cfg_put_params (nlh, NFQNL_COPY_PACKET, (int)pkt_inet_max);
     mnl_attr_put_u32 (nlh, NFQA_CFG_FLAGS,
         htonl (
 #ifdef HAVE_LIBNETFILTER_QUEUE_GSO
@@ -583,8 +583,8 @@ int falgnfq_loop_run (FalgnfqLoop *loop) {
     while (true) {
 #endif
         debug ("FalgnfqLoop %p run: mnl_socket_recvfrom", loop);
-        ssize_t pkt_len = mnl_socket_recvfrom (loop->nl, pkt, loop->pkt_max);
-        if (pkt_len < 0) {
+        ssize_t pkt_rval = mnl_socket_recvfrom (loop->nl, pkt, loop->pkt_max);
+        if (pkt_rval < 0) {
             if (errno == ENOBUFS) {
                 warning ("mnl_socket_recvfrom: %s", ERRMSG);
                 continue;
@@ -597,6 +597,7 @@ int falgnfq_loop_run (FalgnfqLoop *loop) {
             }
         }
 
+        size_t pkt_len = (size_t)pkt_rval;
         debug ("FalgnfqLoop %p run: mnl_cb_run", loop);
         if (mnl_cb_run (pkt, pkt_len, 0, loop->portid, queue_cb, loop) < 0) {
             error ("mnl_cb_run: %s", ERRMSG);
