@@ -6,12 +6,12 @@
 #include "falgnfq-private.h"
 #include "falgnfq-dump.h"
 
-#define LIBNETFILTER_IS_VERY_BUGGY
+#define LIBNETFILTER_QUEUE_IS_VERY_BUGGY
 
 // XXX: Workaround buggy libnetfilter_queue functions
-#ifdef LIBNETFILTER_IS_VERY_BUGGY
+#ifdef LIBNETFILTER_QUEUE_IS_VERY_BUGGY
 # define nfq_ip6hdr_snprintf    nfq_ip6_snprintf
-#endif // LIBNETFILTER_IS_VERY_BUGGY
+#endif // LIBNETFILTER_QUEUE_IS_VERY_BUGGY
 
 #include <arpa/inet.h>
 #include <errno.h>
@@ -35,11 +35,11 @@
 #include <stdlib.h>
 
 // XXX: Workaround buggy libnetfilter_queue functions
-#ifdef LIBNETFILTER_IS_VERY_BUGGY
+#ifdef LIBNETFILTER_QUEUE_IS_VERY_BUGGY
 # define nfq_udp_get_payload        udp_get_payload
 # define nfq_udp_get_payload_len    udp_get_payload_len
 # define nfq_ip_snprintf            ip_snprintf
-#endif // LIBNETFILTER_IS_VERY_BUGGY
+#endif // LIBNETFILTER_QUEUE_IS_VERY_BUGGY
 
 // Casting macros
 #define IPHDR(x)    ((struct iphdr*)(x))
@@ -204,7 +204,7 @@ static int before_get_param (FalgprotoPacket *pkt,
 }
 
 
-#ifdef LIBNETFILTER_IS_VERY_BUGGY
+#ifdef LIBNETFILTER_QUEUE_IS_VERY_BUGGY
 
 /* XXX: libnetfilter_queue contains many buggy functions, so we have to write
  *      our correct version and use them instead.
@@ -266,7 +266,7 @@ static int ip_snprintf (
                      iph->protocol);
 }
 
-#endif // LIBNETFILTER_IS_VERY_BUGGY
+#endif // LIBNETFILTER_QUEUE_IS_VERY_BUGGY
 
 
 static bool tcp_inspect (
