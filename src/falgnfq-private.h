@@ -2,6 +2,7 @@
 #ifndef FALGNFQ_PRIVATE_H
 #define FALGNFQ_PRIVATE_H
 
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -52,5 +53,18 @@ static inline char* errmsg (int errnum, char *errbuf, size_t errlen) {
     return strerror_r (errnum, errbuf, errlen);
 #endif
 }
+
+
+// Packet info
+
+#define PKT_INFO(x) ((struct pkt_info*)(x))
+
+struct pkt_buff;
+typedef struct pkt_info {
+    uint32_t            id;
+    uint32_t            mark;
+    struct pkt_buff*    pktb;
+    void*               transport_header;
+} PktInfo;
 
 #endif /* FALGNFQ_PRIVATE_H */

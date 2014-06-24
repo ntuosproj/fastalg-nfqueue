@@ -2,9 +2,11 @@
 
 #include "config.h"
 #include "falgnfq-config.h"
+#include "falgnfq-dump.h"
 #include "falgnfq-loop.h"
 #include "falgnfq-private.h"
-#include "falgnfq-dump.h"
+#include "falgnfq-rng.h"
+#include "falgnfq-tcp.h"
 
 #define LIBNETFILTER_QUEUE_IS_VERY_BUGGY
 
@@ -36,6 +38,8 @@
 
 // XXX: Workaround buggy libnetfilter_queue functions
 #ifdef LIBNETFILTER_QUEUE_IS_VERY_BUGGY
+# define nfq_tcp_get_payload        tcp_get_payload
+# define nfq_tcp_get_payload_len    tcp_get_payload_len
 # define nfq_udp_get_payload        udp_get_payload
 # define nfq_udp_get_payload_len    udp_get_payload_len
 # define nfq_ip_snprintf            ip_snprintf
@@ -62,6 +66,7 @@ struct falgnfq_loop {
     unsigned            portid;     // (cache) netlink socket portid
     size_t              pkt_max;    // maximal possible netlink packet
     GHashTable*         pkts;       // a hash table of FalgprotoPacket
+    int                 rng;        // random number generator
 };
 
 /* We only process one transport layer protocol (TCP or UDP), so
@@ -71,67 +76,126 @@ struct falgnfq_loop {
 #define PACKET_KEY(sport,dport) \
     GUINT_TO_POINTER ((unsigned int)(((uint32_t)dport) * 65536 + sport))
 
-#define PKT_INFO(x) ((struct pkt_info*)(x))
+#define TRANSPORT_STATUS(x)  ((struct transport_status*)(x))
+#define TCP_STATUS(x)        ((struct tcp_status*)(x))
+#define UDP_STATUS(x)        ((struct udp_status*)(x))
 
-struct pkt_info {
-    uint32_t            id;
-    uint32_t            mark;
-    struct pkt_buff*    pktb;
-};
+typedef struct transport_status {
+    FalgprotoPacket*    last;
+} TransportStatus;
+
+typedef struct tcp_status {
+    TransportStatus     inherited;
+    FalgnfqTcp*         tcp;
+} TcpStatus;
+
+typedef struct udp_status {
+    TransportStatus     inherited;
+} UdpStatus;
 
 /* The first item in the list is not used to store packets.
  * Its only significant field is data, which is used to store
- * the pointer to the last packet in the list.
+ * information of the entire connection. It must contain the
+ * pointer to the last packet in the list, so insertion to the
+ * list can be done in constant time.
  *
  * Other items are used to store packets, with data field used
  * to store the other information using struct pkt_info.
+ *
+ *
+ * Example:
+ *
+ * head->payload   is unused.
+ * head->len       is unused.
+ * head->data      is a (struct tcp_info*) or a (struct udp_info*).
+ *
+ * head->next->payload   is the pointer to the payload of the first packet.
+ * head->next->len       is the length of the payload of the first packet.
+ * head->next->data      is the (struct pkt_info*) of the first packet.
+ *
  */
-#define ITEM_SIZE   (sizeof (FalgprotoPacket) + sizeof (struct pkt_info))
-#define FIRST_PKT(list)   ((list)->next)
-#define LAST_PKT(list)    ((FalgprotoPacket*)((list)->data))
-#define GET_PKT_INFO(x) \
-    (struct pkt_info*)(((char*)(x)) + sizeof (FalgprotoPacket))
+#define PKT_FIRST(head)   ((head)->next)
+#define PKT_LAST(head)    (TRANSPORT_STATUS ((head)->data)->last)
 
-static FalgprotoPacket* packet_list_new (void) {
-    FalgprotoPacket *list = g_slice_alloc (ITEM_SIZE);
+// This function should not be used directly
+static inline FalgprotoPacket* packet_list_new (size_t head_data_size) {
+    FalgprotoPacket *list = g_slice_alloc (sizeof (FalgprotoPacket));
     list->next = NULL;
-    list->data = list;
     list->payload = NULL;
     list->len = 0;
+    list->state = NULL;
+    list->data = g_slice_alloc (head_data_size);
+    PKT_LAST (list) = list;
+    return list;
+}
+
+static FalgprotoPacket* packet_list_tcp_new (void) {
+    FalgprotoPacket *list = packet_list_new (sizeof (TcpStatus));
+
+    // Constructor code of TcpStatus goes here
+    TCP_STATUS (list->data)->tcp = falgnfq_tcp_new ();
+
+    return list;
+}
+
+static FalgprotoPacket* packet_list_udp_new (void) {
+    FalgprotoPacket *list = packet_list_new (sizeof (UdpStatus));
+
+    // Constructor code of UdpStatus goes here
+
     return list;
 }
 
 static void packet_list_append (
     FalgprotoPacket *head, char *payload, size_t len,
-    uint32_t id, uint32_t mark, struct pkt_buff *pktb) {
+    uint32_t id, uint32_t mark, struct pkt_buff *pktb,
+    void *transport_header) {
 
-    FalgprotoPacket *item = g_slice_alloc (ITEM_SIZE);
-    struct pkt_info *info = GET_PKT_INFO (item);
+    FalgprotoPacket *item = g_slice_alloc (sizeof (FalgprotoPacket));
+    struct pkt_info *info = g_slice_alloc (sizeof (PktInfo));
 
     info->id = id;
     info->mark = mark;
     info->pktb = pktb;
+    info->transport_header = transport_header;
 
     item->next = NULL;
-    item->data = info;
     item->payload = payload;
     item->len = len;
+    item->state = NULL;
+    item->data = info;
 
-    FalgprotoPacket *last = head->data;
-    last->next = item;
-    head->data = item;
+    PKT_LAST (head)->next = item;
+    PKT_LAST (head) = item;
 }
 
-static void packet_list_free (void *head) {
+// This function should not be used directly
+static inline void packet_list_free (void *head, size_t head_data_size) {
     FalgprotoPacket *iter = head;
     FalgprotoPacket *next = iter->next;
 
-    g_slice_free1 (ITEM_SIZE, iter);
+    g_slice_free1 (head_data_size, iter->data);
+    g_slice_free1 (sizeof (FalgprotoPacket), iter);
     for (iter = next; iter != NULL; iter = next) {
         next = iter->next;
         pktb_free (PKT_INFO (iter->data)->pktb);
-        g_slice_free1 (ITEM_SIZE, iter);
+        g_slice_free1 (sizeof (PktInfo), iter->data);
+        g_slice_free1 (sizeof (FalgprotoPacket), iter);
     }
+}
+
+static void packet_list_tcp_free (void *head_generic) {
+    // Destructor code of TcpStatus goes here
+    FalgprotoPacket *head = head_generic;
+    falgnfq_tcp_free (TCP_STATUS (head->data)->tcp);
+
+    packet_list_free (head_generic, sizeof (TcpStatus));
+}
+
+static void packet_list_udp_free (void *head_generic) {
+    // Destructor code of UdpStatus goes here
+
+    packet_list_free (head_generic, sizeof (UdpStatus));
 }
 
 static struct nlmsghdr* queue_pkt_init (
@@ -177,7 +241,7 @@ static void queue_verdict (FalgnfqLoop *loop,
  *       protocol support in fastalg-protocol are completed because
  *       there will be no need to check whether a function is implemented.
  */
-static int before_get_param (FalgprotoPacket *pkt,
+static inline int before_get_param (FalgprotoPacket *pkt,
     FalgnfqLoop *loop, const char *caller_name) {
 
     if_debug (1) {
@@ -203,6 +267,28 @@ static int before_get_param (FalgprotoPacket *pkt,
     return 0;
 }
 
+static inline uint32_t get_mark_from_param (
+    FalgnfqLoop *loop, FalgprotoParam param) {
+
+    if (param.param) {
+        debug ("  %s: param is %*s", __func__, (int)(param.len), param.param);
+        for (size_t i = 0; i < loop->config->maps_len; i++) {
+            if (loop->proto.matcher (param.param, param.len,
+                loop->config->maps[i].param,
+                loop->config->maps[i].param_len)) {
+
+                debug ("  %s: maps[%zu] matched (%s)",
+                    __func__, i, loop->config->maps[i].param);
+                debug ("  %s: new mark is %" PRIu32,
+                    __func__, loop->config->maps[i].mark);
+                return loop->config->maps[i].mark;
+            }
+        }
+    }
+
+    return loop->config->default_mark;
+}
+
 
 #ifdef LIBNETFILTER_QUEUE_IS_VERY_BUGGY
 
@@ -211,6 +297,34 @@ static int before_get_param (FalgprotoPacket *pkt,
  *      Not all bugs have been reported to the upstream. Here is the upstream
  *      bugzilla: http://bugzilla.netfilter.org/.
  */
+
+/* XXX: nfq_tcp_get_payload returns NULL when there is no payload, but we need
+ *      these packets because they may contains control message.
+ */
+static void* tcp_get_payload (struct tcphdr *tcph, struct pkt_buff *pktb) {
+    unsigned int doff = (unsigned int)(tcph->doff) * 4;
+
+    /* malformed TCP data offset. */
+    uint8_t *transport_header = pktb_transport_header (pktb);
+    uint8_t *tail = pktb_data (pktb) + pktb_len (pktb);
+    if (transport_header + doff > tail) {
+        return NULL;
+    }
+
+    return transport_header + doff;
+}
+
+/* XXX: nfq_tcp_get_payload_len is WRONG!
+ */
+static unsigned int tcp_get_payload_len (
+    struct tcphdr *tcph, struct pkt_buff *pktb) {
+
+    uint8_t *transport_header = pktb_transport_header (pktb);
+    uint8_t *tail = pktb_data (pktb) + pktb_len (pktb);
+    unsigned int doff = (unsigned int)(tcph->doff) * 4;
+
+    return (unsigned int)(tail - transport_header) - doff;
+}
 
 /* XXX: nfq_udp_get_payload does not work at all. Its implementation is WRONG!
  *      Therefore, we implement our version udp_get_payload.
@@ -274,8 +388,49 @@ static bool tcp_inspect (
     FalgprotoPacket *list, void *key,
     struct pkt_info info, uint32_t *verdict) {
 
-    error ("  %s: function not implemented", __func__);
-    *verdict = loop->config->default_mark;
+    char *payload = nfq_tcp_get_payload (th, info.pktb);
+    size_t len = nfq_tcp_get_payload_len (th, info.pktb);
+    debug ("  %s: %zu bytes of payload", __func__, len);
+    packet_list_append (list, payload, len, info.id, info.mark, info.pktb, th);
+    if (payload == NULL) {
+        warning ("  %s: this is not a valid TCP packet!", __func__);
+        warning ("  %s: please check your ip/nftables settings", __func__);
+        *verdict = loop->config->default_mark;
+        return true;
+    }
+
+    FalgprotoPacket *pkt = PKT_FIRST (list);
+    if (before_get_param (pkt, loop, __func__) < 0) {
+        *verdict = loop->config->default_mark;
+        return true;
+    }
+
+    if (!falgnfq_tcp_client (
+        TCP_STATUS (list->data)->tcp, loop->rng,
+        PKT_FIRST (list), PKT_LAST (list))) {
+
+        *verdict = loop->config->default_mark;
+        return true;
+    }
+
+    FalgprotoParam param = loop->proto.param_getter (pkt);
+
+    if (param.result < 0) {
+        error ("  %s: error while getting param from the packet", __func__);
+        *verdict = loop->config->default_mark;
+        return true;
+    } else if (param.result > 0) {
+        debug ("  %s: incomplete data, waiting for the next packet", __func__);
+        return false;
+    }
+
+    uint32_t mark = get_mark_from_param (loop, param);
+
+    if (param.dup) {
+        free (param.param);
+    }
+
+    *verdict = mark;
     return true;
 }
 
@@ -287,7 +442,7 @@ static bool udp_inspect (
     char *payload = nfq_udp_get_payload (uh, info.pktb);
     size_t len = nfq_udp_get_payload_len (uh, info.pktb);
     debug ("  %s: %zu bytes of payload", __func__, len);
-    packet_list_append (list, payload, len, info.id, info.mark, info.pktb);
+    packet_list_append (list, payload, len, info.id, info.mark, info.pktb, uh);
     if (payload == NULL) {
         warning ("  %s: this is not a valid UDP packet!", __func__);
         warning ("  %s: please check your ip/nftables settings", __func__);
@@ -295,7 +450,7 @@ static bool udp_inspect (
         return true;
     }
 
-    FalgprotoPacket *pkt = FIRST_PKT (list);
+    FalgprotoPacket *pkt = PKT_FIRST (list);
     if (before_get_param (pkt, loop, __func__) < 0) {
         *verdict = loop->config->default_mark;
         return true;
@@ -312,22 +467,7 @@ static bool udp_inspect (
         return false;
     }
 
-    uint32_t mark = loop->config->default_mark;
-    if (param.param) {
-        debug ("  %s: param is %*s", __func__, (int)(param.len), param.param);
-        for (size_t i = 0; i < loop->config->maps_len; i++) {
-            if (loop->proto.matcher (param.param, param.len,
-                loop->config->maps[i].param,
-                loop->config->maps[i].param_len)) {
-
-                mark = loop->config->maps[i].mark;
-                debug ("  %s: maps[%zu] matched (%s)",
-                    __func__, i, loop->config->maps[i].param);
-                debug ("  %s: new mark is %" PRIu32, __func__, mark);
-                break;
-            }
-        }
-    }
+    uint32_t mark = get_mark_from_param (loop, param);
 
     if (param.dup) {
         free (param.param);
@@ -499,7 +639,7 @@ static int queue_cb (const struct nlmsghdr *nlh, void *loop_generic) {
             key = PACKET_KEY (ntohs (th->source), ntohs (th->dest));
             FalgprotoPacket *list = g_hash_table_lookup (loop->pkts, key);
             if (list == NULL) {
-                list = packet_list_new ();
+                list = packet_list_tcp_new ();
                 g_hash_table_insert (loop->pkts, key, list);
             }
 
@@ -507,6 +647,8 @@ static int queue_cb (const struct nlmsghdr *nlh, void *loop_generic) {
                 debug ("  packet id %" PRIu32 ", saved in the list", pkt_id);
                 return MNL_CB_OK;
             }
+
+            // TODO: Call falgnfq_tcp_server
 
             queue_verdict (loop, list, key, verdict);
         } break;
@@ -527,7 +669,7 @@ static int queue_cb (const struct nlmsghdr *nlh, void *loop_generic) {
             key = PACKET_KEY (ntohs (uh->source), ntohs (uh->dest));
             FalgprotoPacket *list = g_hash_table_lookup (loop->pkts, key);
             if (list == NULL) {
-                list = packet_list_new ();
+                list = packet_list_udp_new ();
                 g_hash_table_insert (loop->pkts, key, list);
             }
 
@@ -600,6 +742,12 @@ FalgnfqLoop* falgnfq_loop_new (FalgnfqConfig *config) {
         return NULL;
     }
 
+    int rng = falgnfq_rng_new ();
+    if (rng < 0) {
+        error ("Fail to open the random number generator: %s\n", ERRMSG);
+        return NULL;
+    }
+
     // allocate the struct and return
     FalgnfqLoop *loop = malloc (sizeof (FalgnfqLoop));
     if (loop == NULL) {
@@ -615,8 +763,23 @@ FalgnfqLoop* falgnfq_loop_new (FalgnfqConfig *config) {
     loop->nl = nl;
     loop->portid = mnl_socket_get_portid (nl);
     loop->pkt_max = pkt_max;
-    loop->pkts = g_hash_table_new_full (
-        g_direct_hash, g_direct_equal, NULL, packet_list_free);
+    loop->rng = rng;
+
+    switch (loop->proto.transport) {
+        case FALGPROTO_TRANSPORT_TCP:
+            loop->pkts = g_hash_table_new_full (
+                g_direct_hash, g_direct_equal, NULL, packet_list_tcp_free);
+            break;
+        case FALGPROTO_TRANSPORT_UDP:
+            loop->pkts = g_hash_table_new_full (
+                g_direct_hash, g_direct_equal, NULL, packet_list_udp_free);
+            break;
+        default:
+            error (
+                "UNEXPECTED ERROR: unknown transport layer protocol "
+                "returned from fastalg-protocol library.");
+            abort ();
+    }
 
     debug ("FalgnfqLoop new -> %p", loop);
 
