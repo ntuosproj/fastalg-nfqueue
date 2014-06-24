@@ -208,6 +208,13 @@ FalgnfqConfig* falgnfq_config_new_from_arg (
             memcpy (addr, iter->ai_addr, iter->ai_addrlen);
             config->maps[maps_ok].addr = addr;
             config->maps[maps_ok].addr_len = iter->ai_addrlen;
+            break;
+        }
+        freeaddrinfo (result);
+
+        if (config->maps[maps_ok].addr == NULL) {
+            set_error ("No address found for %s:%s", argv[i + 2], argv[i + 3]);
+            goto free_maps;
         }
     }
     config->maps[maps_ok].param = NULL;
