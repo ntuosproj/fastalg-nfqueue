@@ -24,8 +24,10 @@ static void falgnfq_exit_setter (int signo) {
 static void usage (const char* name) {
     printf (
         "Usage:   %s family queue_num protocol default_mark "
-        "[[param1 mark1] [param2 mark2] ...]\n"
-        "Example: %s ipv4 0 http 1 a.csie.org 2 b.csie.org 3\n", name, name);
+        "[[param1 mark1 host1 port1] [param2 mark2 host2 port2] ...]\n"
+        "Example: %s ipv4 0 http 1 "
+        "a.csie.org 2 192.168.1.92 80 "
+        "b.csie.org 3 192.168.1.93 80\n", name, name);
     exit (0);
 }
 

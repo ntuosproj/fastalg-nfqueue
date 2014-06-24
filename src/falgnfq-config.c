@@ -4,12 +4,21 @@
 #include "falgnfq-config.h"
 #include "falgnfq-private.h"
 
+#include <arpa/inet.h>
 #include <errno.h>
 #include <inttypes.h>
 #include <glib.h>
+#include <netdb.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+
+// Casting macros
+#define SOCKADDR(x)      ((struct sockaddr*)(x))
+#define SOCKADDR_IN(x)   ((struct sockaddr_in*)(x))
+#define SOCKADDR_IN6(x)  ((struct sockaddr_in6*)(x))
 
 #define set_error(...) \
     if (error != NULL) { \
@@ -47,16 +56,43 @@ static int parse_number (const char *str, unsigned long *result) {
 }
 
 static void show_config (FalgnfqConfig *config) {
+    FalgprotoTransport transport = falgproto_get_transport (config->protocol);
+
     debug ("Config OK!");
     debug ("  family = %s",
         config->family == AF_INET  ? IPV4_RECOMMENDED :
         config->family == AF_INET6 ? IPV6_RECOMMENDED : "unknown");
+    debug ("  transport = %s",
+        transport == FALGPROTO_TRANSPORT_TCP ? "TCP" :
+        transport == FALGPROTO_TRANSPORT_UDP ? "UDP" : "unknown");
     debug ("  queue_num = %" PRIu16, config->queue_num);
     debug ("  protocol = %s", falgproto_get_description (config->protocol));
     debug ("  default_mark = %" PRIu32, config->default_mark);
     for (size_t i = 0; i < config->maps_len; i++) {
-        debug ("  maps[%zd].param = %s", i, config->maps[i].param);
-        debug ("  maps[%zd].mark = %" PRIu32, i, config->maps[i].mark);
+        debug ("  maps[%zu].param = %s", i, config->maps[i].param);
+        debug ("  maps[%zu].mark = %" PRIu32, i, config->maps[i].mark);
+
+        switch (config->family) {
+            case AF_INET: {
+                char ipv4_str[INET_ADDRSTRLEN];
+                inet_ntop (config->family,
+                    &SOCKADDR_IN (config->maps[i].addr)->sin_addr,
+                    ipv4_str, INET_ADDRSTRLEN);
+                debug ("  maps[%zu].host = %s", i, ipv4_str);
+                debug ("  maps[%zu].port = %" PRIu16, i,
+                    ntohs (SOCKADDR_IN (config->maps[i].addr)->sin_port));
+            } break;
+
+            case AF_INET6: {
+                char ipv6_str[INET6_ADDRSTRLEN];
+                inet_ntop (config->family,
+                    &SOCKADDR_IN6 (config->maps[i].addr)->sin6_addr,
+                    ipv6_str, INET6_ADDRSTRLEN);
+                debug ("  maps[%zu].host = %s", i, ipv6_str);
+                debug ("  maps[%zu].port = %" PRIu16, i,
+                    ntohs (SOCKADDR_IN6 (config->maps[i].addr)->sin6_port));
+            } break;
+        }
     }
 }
 
@@ -70,7 +106,7 @@ FalgnfqConfig* falgnfq_config_new_from_arg (
     if (argc < 5) {
         set_error ("Too few arguments");
         goto free_nothing;
-    } else if ((argc - 5) % 2) {
+    } else if ((argc - 5) % 4) {
         set_error ("Missing mark number for `%s\'", argv[argc - 1]);
         goto free_nothing;
     }
@@ -119,7 +155,7 @@ FalgnfqConfig* falgnfq_config_new_from_arg (
         default_mark = (uint32_t)default_mark_ulong;
     }
 
-    size_t maps_len = ((unsigned int)argc - 4) / 2;
+    size_t maps_len = ((unsigned int)argc - 4) / 4;
     size_t maps_ok = 0;
     FalgnfqConfig *config = malloc (
         sizeof (FalgnfqConfig) + sizeof (FalgnfqMap) * (maps_len + 1));
@@ -134,7 +170,7 @@ FalgnfqConfig* falgnfq_config_new_from_arg (
     config->default_mark = default_mark;
     config->maps_len = maps_len;
 
-    for (size_t i = 5; maps_ok < maps_len; maps_ok++, i += 2) {
+    for (size_t i = 5; maps_ok < maps_len; maps_ok++, i += 4) {
 
         unsigned long mark_ulong;
         if (parse_number (argv[i + 1], &mark_ulong) < 0) {
@@ -142,7 +178,7 @@ FalgnfqConfig* falgnfq_config_new_from_arg (
             goto free_maps;
         }
         config->maps[maps_ok].mark = (uint32_t)mark_ulong;
-        config->maps[maps_ok].dup = param_dup;
+        config->maps[maps_ok].param_dup = param_dup;
 
         if (param_dup) {
             config->maps[maps_ok].param = strdup (argv[i]);
@@ -150,6 +186,29 @@ FalgnfqConfig* falgnfq_config_new_from_arg (
             config->maps[maps_ok].param = argv[i];
         }
         config->maps[maps_ok].param_len = strlen (argv[i]);
+        config->maps[maps_ok].addr = NULL;
+
+        struct addrinfo *iter, *result, hints = {
+            .ai_family = config->family
+        };
+        int gai_error = getaddrinfo (argv[i + 2], argv[i + 3], &hints, &result);
+        if (gai_error != 0) {
+            set_error ("getaddrinfo: host = %s, port = %s, error = %s",
+                argv[i + 2], argv[i + 3], gai_strerror (gai_error));
+            goto free_maps;
+        }
+
+        for (iter = result; iter != NULL; iter = iter->ai_next) {
+            struct sockaddr *addr = malloc (iter->ai_addrlen);
+            if (addr == NULL) {
+                set_error ("malloc: %s", ERRMSG);
+                goto free_maps;
+            }
+
+            memcpy (addr, iter->ai_addr, iter->ai_addrlen);
+            config->maps[maps_ok].addr = addr;
+            config->maps[maps_ok].addr_len = iter->ai_addrlen;
+        }
     }
     config->maps[maps_ok].param = NULL;
 
@@ -160,8 +219,11 @@ FalgnfqConfig* falgnfq_config_new_from_arg (
 
 free_maps:
     for (size_t i = 0; i < maps_ok; i++) {
-        if (config->maps[i].dup) {
+        if (config->maps[i].param_dup) {
             free (config->maps[i].param);
+        }
+        if (config->maps[i].addr) {
+            free (config->maps[i].addr);
         }
     }
 free_config:
@@ -180,7 +242,7 @@ FalgnfqConfig* falgnfq_config_new_from_file (
 void falgnfq_config_free (FalgnfqConfig *config) {
     debug ("FalgnfqConfig %p free", config);
     for (size_t i = 0; i < config->maps_len; i++) {
-        if (config->maps[i].dup) {
+        if (config->maps[i].param_dup) {
             free (config->maps[i].param);
         }
     }

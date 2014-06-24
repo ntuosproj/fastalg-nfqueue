@@ -10,10 +10,12 @@
 
 
 typedef struct falgnfq_map {
-    uint32_t    mark;
-    char*       param;
-    size_t      param_len;
-    bool        dup;
+    uint32_t         mark;
+    char*            param;
+    size_t           param_len;
+    bool             param_dup;
+    struct sockaddr* addr;
+    socklen_t        addr_len;
 } FalgnfqMap;
 
 typedef struct falgnfq_config {
