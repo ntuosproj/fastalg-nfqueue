@@ -3,6 +3,7 @@
 #define FALGNFQ_PRIVATE_H
 
 #include <stdint.h>
+#include <signal.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -35,7 +36,7 @@ extern unsigned int falgnfq_debug;
 
 // Exit
 
-extern volatile int falgnfq_exit;
+extern volatile sig_atomic_t falgnfq_exit;
 
 
 // Error message (thread-safe)

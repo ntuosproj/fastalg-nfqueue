@@ -15,7 +15,7 @@
 
 
 unsigned int falgnfq_debug;
-volatile int falgnfq_exit;
+volatile sig_atomic_t falgnfq_exit;
 
 static void falgnfq_exit_setter (int signo) {
     falgnfq_exit = 1;
@@ -68,6 +68,12 @@ int main (int argc, char *argv[]) {
     sa_int.sa_flags = 0;
     sigemptyset (&sa_int.sa_mask);
     sigaction (SIGINT, &sa_int, NULL);
+
+    struct sigaction sa_pipe;
+    sa_pipe.sa_handler = SIG_IGN;
+    sa_pipe.sa_flags = 0;
+    sigemptyset (&sa_pipe.sa_mask);
+    sigaction (SIGPIPE, &sa_pipe, NULL);
 #endif
 
     // No argument -> usage()
