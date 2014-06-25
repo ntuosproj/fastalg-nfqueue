@@ -252,6 +252,9 @@ void falgnfq_config_free (FalgnfqConfig *config) {
         if (config->maps[i].param_dup) {
             free (config->maps[i].param);
         }
+        if (config->maps[i].addr) {
+            free (config->maps[i].addr);
+        }
     }
     free (config);
 }
