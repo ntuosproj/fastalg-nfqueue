@@ -48,7 +48,7 @@ int falgnfq_dump_payload(
 		for(i = 0; i < 4; i++){
 			current_byte = payload[ dumped + i ];
 			for(j = 7; j>=0; j--){
-				buf[ buf_offset + j ] = ( current_byte & 0x01 == 1 )? '1': '0';
+				buf[ buf_offset + j ] = ( (current_byte & 0x01) == 1 )? '1': '0';
 				current_byte = current_byte >> 1;
 			}
 			if( i == 3 ){
@@ -67,7 +67,7 @@ int falgnfq_dump_payload(
 		for( ; len - dumped > 0; dumped++ ){
 			current_byte = payload[ dumped ];
 			for(j=7; j>=0; j--){
-				buf[ buf_offset + j ] = ( current_byte & 0x01 == 1 )? '1': '0';
+				buf[ buf_offset + j ] = ( (current_byte & 0x01) == 1 )? '1': '0';
 				current_byte = current_byte >> 1;
 			}
 			buf[ buf_offset + 8 ] = ' ';
