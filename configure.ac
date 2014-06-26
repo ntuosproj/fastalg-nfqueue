@@ -11,6 +11,11 @@ AC_CONFIG_HEADERS([config.h])
 AM_INIT_AUTOMAKE([foreign subdir-objects])
 AM_SILENT_RULES([yes])
 
+m4_define([package_date_value], [m4_esyscmd([git show -s --format='%ad' --date=short `git rev-parse HEAD`])])
+package_date=package_date_value
+AC_DEFINE_UNQUOTED([PACKAGE_DATE], ["$package_date"],
+          [Define to the date of the version of the package])
+
 # Checks for programs.
 AC_PROG_CC
 AC_PROG_CC_STDC
