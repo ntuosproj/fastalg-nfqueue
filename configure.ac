@@ -2,7 +2,9 @@
 # Process this file with autoconf to produce a configure script.
 # vim: set sw=4 ts=4 sts=4 et:
 
-AC_INIT([fastalg-nfqueue], [0.1], [BUG-REPORT-ADDRESS])
+AC_INIT([fastalg-nfqueue],
+        [m4_esyscmd([build-aux/git-version-gen .tarball-version])],
+        [BUG-REPORT-ADDRESS])
 AC_CONFIG_SRCDIR([src/falgnfq-main.c])
 AC_CONFIG_HEADERS([config.h])
 
@@ -40,7 +42,7 @@ AC_DEFINE([_BSD_SOURCE], [1], [Workaround annoying glibc feature tests])
 # Checks for required libraries.
 PKG_CHECK_MODULES(GLIB, [glib-2.0])
 PKG_CHECK_MODULES(NETFILTER, [libmnl libnetfilter_queue >= 1.0.2])
-PKG_CHECK_MODULES(FALGPROTO, [falgproto-0.1 = 0.1.3])
+PKG_CHECK_MODULES(FALGPROTO, [falgproto-0.1 >= 0.1.3])
 
 # Checks for libnetfilter_queue GSO handling features.
 for libnetfilter_queue_gso_constant in \

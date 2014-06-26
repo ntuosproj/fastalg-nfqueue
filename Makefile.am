@@ -6,7 +6,15 @@ bin_PROGRAMS = src/fastalg-nfqueue
 
 EXTRA_DIST = \
 	autogen.sh		\
+	$(top_srcdir)/.version	\
 	$(NULL)
+
+# For git-version-gen
+BUILT_SOURCES = $(top_srcdir)/.version
+$(top_srcdir)/.version:
+	echo $(VERSION) > $@-t && mv $@-t $@
+dist-hook:
+	echo $(VERSION) > $(distdir)/.tarball-version
 
 src_fastalg_nfqueue_SOURCES = \
 	src/falgnfq-private.h	\

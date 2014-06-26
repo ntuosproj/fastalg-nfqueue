@@ -23,6 +23,7 @@ static void falgnfq_exit_setter (int signo) {
 
 static void usage (const char* name) {
     printf (
+        PACKAGE_STRING "\n"
         "Usage:   %s family queue_num protocol default_mark "
         "[[param1 mark1 host1 port1] [param2 mark2 host2 port2] ...]\n"
         "Example: %s ipv4 0 http 1 "
