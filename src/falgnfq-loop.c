@@ -886,6 +886,7 @@ free_nothing:
 int falgnfq_loop_run (FalgnfqLoop *loop) {
     ERRMSG_INIT;
     char pkt[loop->pkt_max];
+    bool tcp = loop->proto.transport == FALGPROTO_TRANSPORT_TCP;
 
     debug ("FalgnfqLoop %p run", loop);
 
@@ -900,39 +901,42 @@ int falgnfq_loop_run (FalgnfqLoop *loop) {
         [POLL_RAW_IP]  = { .fd = loop->raw_ip,  .events = POLLOUT },
         [POLL_RAW_TCP] = { .fd = loop->raw_tcp, .events = POLLOUT }
     };
+    nfds_t nfds = tcp ? POLL_MAX : 1;
 
 #ifndef NDEBUG
     while (!falgnfq_exit) {
 #else
     while (true) {
 #endif
-        // Prevent endless loops
-        if (g_queue_is_empty (&loop->raw_ip_q)) {
-            debug ("FalgnfqLoop %p run: disable raw IP socket", loop);
-            if (fds[POLL_RAW_IP].fd > 0) {
-                fds[POLL_RAW_IP].fd = - fds[POLL_RAW_IP].fd;
+        if (tcp) {
+            // Prevent endless loops
+            if (g_queue_is_empty (&loop->raw_ip_q)) {
+                debug ("FalgnfqLoop %p run: disable raw IP socket", loop);
+                if (fds[POLL_RAW_IP].fd > 0) {
+                    fds[POLL_RAW_IP].fd = - fds[POLL_RAW_IP].fd;
+                }
+            } else {
+                debug ("FalgnfqLoop %p run: enable raw IP socket", loop);
+                if (fds[POLL_RAW_IP].fd < 0) {
+                    fds[POLL_RAW_IP].fd = - fds[POLL_RAW_IP].fd;
+                }
             }
-        } else {
-            debug ("FalgnfqLoop %p run: enable raw IP socket", loop);
-            if (fds[POLL_RAW_IP].fd < 0) {
-                fds[POLL_RAW_IP].fd = - fds[POLL_RAW_IP].fd;
-            }
-        }
 
-        if (g_queue_is_empty (&loop->raw_tcp_q)) {
-            debug ("FalgnfqLoop %p run: disable raw TCP socket", loop);
-            if (fds[POLL_RAW_TCP].fd > 0) {
-                fds[POLL_RAW_TCP].fd = - fds[POLL_RAW_TCP].fd;
-            }
-        } else {
-            debug ("FalgnfqLoop %p run: enable raw TCP socket", loop);
-            if (fds[POLL_RAW_TCP].fd < 0) {
-                fds[POLL_RAW_TCP].fd = - fds[POLL_RAW_TCP].fd;
+            if (g_queue_is_empty (&loop->raw_tcp_q)) {
+                debug ("FalgnfqLoop %p run: disable raw TCP socket", loop);
+                if (fds[POLL_RAW_TCP].fd > 0) {
+                    fds[POLL_RAW_TCP].fd = - fds[POLL_RAW_TCP].fd;
+                }
+            } else {
+                debug ("FalgnfqLoop %p run: enable raw TCP socket", loop);
+                if (fds[POLL_RAW_TCP].fd < 0) {
+                    fds[POLL_RAW_TCP].fd = - fds[POLL_RAW_TCP].fd;
+                }
             }
         }
 
         debug ("FalgnfqLoop %p run: poll", loop);
-        if (poll (fds, POLL_MAX, -1) < 0) {
+        if (poll (fds, nfds, -1) < 0) {
             if (errno == EINTR || errno == EWOULDBLOCK) {
                 debug ("FalnfqLoop %p run: poll interrupted", loop);
                 continue;
@@ -970,6 +974,11 @@ int falgnfq_loop_run (FalgnfqLoop *loop) {
             }
         }
 
+        if (!tcp) {
+            continue;
+        }
+
+        // Below are TCP-only
         if (fds[POLL_RAW_IP].revents & POLLOUT) {
             debug ("FalgnfqLoop %p run: raw IP socket is ready", loop);
         }
