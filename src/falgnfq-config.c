@@ -15,11 +15,6 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 
-// Casting macros
-#define SOCKADDR(x)      ((struct sockaddr*)(x))
-#define SOCKADDR_IN(x)   ((struct sockaddr_in*)(x))
-#define SOCKADDR_IN6(x)  ((struct sockaddr_in6*)(x))
-
 #define set_error(...) \
     if (error != NULL) { \
         char* g_error = g_strdup_printf (__VA_ARGS__); \

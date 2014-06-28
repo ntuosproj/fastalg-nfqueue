@@ -39,6 +39,17 @@ extern unsigned int falgnfq_debug;
 extern volatile sig_atomic_t falgnfq_exit;
 
 
+// Casting macros
+
+#define IPHDR(x)         ((struct iphdr*)(x))
+#define IP6_HDR(x)       ((struct ip6_hdr*)(x))
+#define TCPHDR           ((struct tcphdr*)(x))
+#define UDPHDR           ((struct udphdr*)(x))
+#define SOCKADDR(x)      ((struct sockaddr*)(x))
+#define SOCKADDR_IN(x)   ((struct sockaddr_in*)(x))
+#define SOCKADDR_IN6(x)  ((struct sockaddr_in6*)(x))
+
+
 // Error message (thread-safe)
 
 #define ERRMSG_INIT      char errbuf[256]; size_t errlen = sizeof (errbuf)

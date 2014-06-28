@@ -45,12 +45,6 @@
 # define nfq_ip_snprintf            ip_snprintf
 #endif // LIBNETFILTER_QUEUE_IS_VERY_BUGGY
 
-// Casting macros
-#define IPHDR(x)    ((struct iphdr*)(x))
-#define IP6_HDR(x)  ((struct ip6_hdr*)(x))
-#define TCPHDR      ((struct tcphdr*)(x))
-#define UDPHDR      ((struct udphdr*)(x))
-
 
 struct proto_info {
     FalgprotoTransport      transport;
