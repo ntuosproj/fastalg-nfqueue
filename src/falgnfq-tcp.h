@@ -12,9 +12,6 @@
 struct falgnfq_tcp;
 typedef struct falgnfq_tcp FalgnfqTcp;
 
-struct falgnfq_config;
-typedef struct falgnfq_config FalgnfqConfig;
-
 FalgnfqTcp*     falgnfq_tcp_new         (struct sockaddr *addr,
                                          socklen_t addr_len,
                                          GQueue *queue_ip,
