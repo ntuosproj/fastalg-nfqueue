@@ -1,5 +1,8 @@
 /* vim: set sw=4 ts=4 sts=4 et: */
 
+#define USE_PKT_INFO
+#define USE_QUEUED_PKT
+
 #include "config.h"
 #include "falgnfq-config.h"
 #include "falgnfq-dump.h"
@@ -33,8 +36,11 @@
 #include <netinet/ip6.h>
 #include <netinet/tcp.h>
 #include <netinet/udp.h>
+#include <poll.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <sys/types.h>
+#include <sys/socket.h>
 
 // XXX: Workaround buggy libnetfilter_queue functions
 #ifdef LIBNETFILTER_QUEUE_IS_VERY_BUGGY
@@ -57,10 +63,15 @@ struct falgnfq_loop {
     FalgnfqConfig*      config;
     struct proto_info   proto;      // (cache) protocol info
     struct mnl_socket*  nl;         // netlink socket
+    int                 nl_fd;      // netlink socket file descriptor
     unsigned            portid;     // (cache) netlink socket portid
     size_t              pkt_max;    // maximal possible netlink packet
     GHashTable*         pkts;       // a hash table of FalgprotoPacket
-    int                 rng;        // random number generator
+    int                 rng;        // (TCP only) random number generator
+    int                 raw_ip;     // (TCP only) raw IPv4 / IPv6 socket
+    GQueue              raw_ip_q;   // (TCP only) raw IPv4 / IPv6 packet queue
+    int                 raw_tcp;    // (TCP only) raw TCP socket
+    GQueue              raw_tcp_q;  // (TCP only) raw TCP packet queue
 };
 
 /* We only process one transport layer protocol (TCP or UDP), so
@@ -75,16 +86,18 @@ struct falgnfq_loop {
 #define UDP_STATUS(x)        ((struct udp_status*)(x))
 
 typedef struct transport_status {
-    FalgprotoPacket*    last;
+    FalgprotoPacket*        last;
 } TransportStatus;
 
 typedef struct tcp_status {
-    TransportStatus     inherited;
-    FalgnfqTcp*         tcp;
+    TransportStatus         inherited;
+    FalgnfqTcp*             tcp;
+    struct sockaddr_storage addr;
+    socklen_t               addr_len;
 } TcpStatus;
 
 typedef struct udp_status {
-    TransportStatus     inherited;
+    TransportStatus         inherited;
 } UdpStatus;
 
 /* The first item in the list is not used to store packets.
@@ -123,11 +136,18 @@ static inline FalgprotoPacket* packet_list_new (size_t head_data_size) {
     return list;
 }
 
-static FalgprotoPacket* packet_list_tcp_new (void) {
+static FalgprotoPacket* packet_list_tcp_new (
+    struct sockaddr_storage *addr, socklen_t addr_len,
+    GQueue *queue_ip, GQueue *queue_tcp) {
+
     FalgprotoPacket *list = packet_list_new (sizeof (TcpStatus));
 
     // Constructor code of TcpStatus goes here
-    TCP_STATUS (list->data)->tcp = falgnfq_tcp_new ();
+    TcpStatus *status = TCP_STATUS (list->data);
+    status->tcp = falgnfq_tcp_new (
+        SOCKADDR (addr), addr_len, queue_ip, queue_tcp);
+    status->addr = *addr;
+    status->addr_len = addr_len;
 
     return list;
 }
@@ -151,6 +171,7 @@ static void packet_list_append (
     info->id = id;
     info->mark = mark;
     info->pktb = pktb;
+    info->network_header = pktb_network_header (pktb);
     info->transport_header = transport_header;
 
     item->next = NULL;
@@ -399,9 +420,8 @@ static bool tcp_inspect (
         return true;
     }
 
-    if (!falgnfq_tcp_client (
-        TCP_STATUS (list->data)->tcp, loop->rng,
-        PKT_FIRST (list), PKT_LAST (list))) {
+    if (!falgnfq_tcp_client (TCP_STATUS (list->data)->tcp,
+        loop->rng, PKT_FIRST (list), PKT_LAST (list))) {
 
         *verdict = loop->config->default_mark;
         return true;
@@ -556,6 +576,8 @@ static int queue_cb (const struct nlmsghdr *nlh, void *loop_generic) {
         return MNL_CB_ERROR;
     }
 
+    struct sockaddr_storage addr;
+    socklen_t addr_len;
     switch (loop->config->family) {
         case AF_INET: {
             struct iphdr *iph = nfq_ip_get_hdr (pktb);
@@ -567,6 +589,10 @@ static int queue_cb (const struct nlmsghdr *nlh, void *loop_generic) {
             if (nfq_ip_set_transport_header (pktb, iph) < 0) {
                 error ("  packet id %" PRIu32 ", truncated IPv4 packet", pkt_id);
             }
+
+            SOCKADDR_IN (&addr)->sin_family = AF_INET;
+            SOCKADDR_IN (&addr)->sin_addr.s_addr = iph->saddr;
+            addr_len = sizeof (struct sockaddr_in);
 
             debug ("  packet id %" PRIu32 ", %s", pkt_id,
                 iph->protocol == IPPROTO_TCP ? "layer 4 is TCP" :
@@ -593,6 +619,10 @@ static int queue_cb (const struct nlmsghdr *nlh, void *loop_generic) {
             if (nfq_ip6_set_transport_header (pktb, ip6h, IPPROTO_NONE) < 0) {
                 error ("  packet id %" PRIu32 ", truncated IPv6 packet", pkt_id);
             }
+
+            SOCKADDR_IN6 (&addr)->sin6_family = AF_INET6;
+            SOCKADDR_IN6 (&addr)->sin6_addr = ip6h->ip6_src;
+            addr_len = sizeof (struct sockaddr_in6);
 
             if_debug (1) {
                 char print_buf[2048];
@@ -630,10 +660,26 @@ static int queue_cb (const struct nlmsghdr *nlh, void *loop_generic) {
                 debug ("  packet id %" PRIu32 ", %s", pkt_id, print_buf);
             }
 
+            switch (addr.ss_family) {
+                case AF_INET:
+                    SOCKADDR_IN (&addr)->sin_port = th->source;
+                    break;
+
+                case AF_INET6:
+                    SOCKADDR_IN6 (&addr)->sin6_port = th->source;
+                    break;
+
+                // This should never happen
+                default:
+                    error ("UNEXPECTED ERROR: unknown address family");
+                    abort ();
+            }
+
             key = PACKET_KEY (ntohs (th->source), ntohs (th->dest));
             FalgprotoPacket *list = g_hash_table_lookup (loop->pkts, key);
             if (list == NULL) {
-                list = packet_list_tcp_new ();
+                list = packet_list_tcp_new (
+                    &addr, addr_len, &loop->raw_ip_q, &loop->raw_tcp_q);
                 g_hash_table_insert (loop->pkts, key, list);
             }
 
@@ -658,6 +704,21 @@ static int queue_cb (const struct nlmsghdr *nlh, void *loop_generic) {
                 char print_buf[2048];
                 nfq_udp_snprintf (print_buf, 2048, uh);
                 debug ("  packet id %" PRIu32 ", %s", pkt_id, print_buf);
+            }
+
+            switch (addr.ss_family) {
+                case AF_INET:
+                    SOCKADDR_IN (&addr)->sin_port = uh->source;
+                    break;
+
+                case AF_INET6:
+                    SOCKADDR_IN6 (&addr)->sin6_port = uh->source;
+                    break;
+
+                // This should never happen
+                default:
+                    error ("UNEXPECTED ERROR: unknown address family");
+                    abort ();
             }
 
             key = PACKET_KEY (ntohs (uh->source), ntohs (uh->dest));
@@ -700,6 +761,7 @@ FalgnfqLoop* falgnfq_loop_new (FalgnfqConfig *config) {
 
     if (mnl_socket_bind (nl, 0, MNL_SOCKET_AUTOPID) < 0) {
         error ("mnl_socket_bind: %s\n", ERRMSG);
+        mnl_socket_close (nl);
         return NULL;
     }
 
@@ -713,7 +775,7 @@ FalgnfqLoop* falgnfq_loop_new (FalgnfqConfig *config) {
     nfq_nlmsg_cfg_put_cmd(nlh, (uint16_t)(config->family), NFQNL_CFG_CMD_BIND);
     if (mnl_socket_sendto(nl, nlh, nlh->nlmsg_len) < 0) {
         error ("mnl_socket_sendto: NFQNL_CFG_CMD_BIND: %s\n", ERRMSG);
-        return NULL;
+        goto free_nl;
     }
 
     // set queue number and options
@@ -733,20 +795,14 @@ FalgnfqLoop* falgnfq_loop_new (FalgnfqConfig *config) {
             NFQA_CFG_F_CONNTRACK));
     if (mnl_socket_sendto(nl, nlh, nlh->nlmsg_len) < 0) {
         error ("mnl_socket_sendto: NFQA_CFG_FLAGS: %s\n", ERRMSG);
-        return NULL;
-    }
-
-    int rng = falgnfq_rng_new ();
-    if (rng < 0) {
-        error ("Fail to open the random number generator: %s\n", ERRMSG);
-        return NULL;
+        goto free_nl;
     }
 
     // allocate the struct and return
     FalgnfqLoop *loop = malloc (sizeof (FalgnfqLoop));
     if (loop == NULL) {
         error ("malloc: %s\n", ERRMSG);
-        return NULL;
+        goto free_nl;
     }
 
     loop->config = config;
@@ -755,19 +811,53 @@ FalgnfqLoop* falgnfq_loop_new (FalgnfqConfig *config) {
     loop->proto.printer = falgproto_get_printer (config->protocol);
     loop->proto.matcher = falgproto_get_matcher (config->protocol);
     loop->nl = nl;
+    loop->nl_fd = mnl_socket_get_fd (nl);
     loop->portid = mnl_socket_get_portid (nl);
     loop->pkt_max = pkt_max;
-    loop->rng = rng;
 
     switch (loop->proto.transport) {
-        case FALGPROTO_TRANSPORT_TCP:
+        case FALGPROTO_TRANSPORT_TCP: {
+            loop->rng = falgnfq_rng_new ();
+            if (loop->rng < 0) {
+                error ("Fail to open the random number generator: %s", ERRMSG);
+                goto free_loop;
+            }
+
+            int one = 1;
+            loop->raw_ip = socket (loop->config->family, SOCK_RAW, IPPROTO_RAW);
+            if (loop->raw_ip < 0) {
+                error ("Fail to open a raw socket: %s", ERRMSG);
+                goto free_rng;
+            }
+            if (setsockopt (loop->raw_ip, IPPROTO_IP, IP_HDRINCL,
+                &one, sizeof(one)) < 0) {
+                error ("setsockopt IP_HDRINCL = 1: %s", ERRMSG);
+                goto free_raw_ip;
+            }
+
+            int zero = 0;
+            loop->raw_tcp = socket (loop->config->family, SOCK_RAW, IPPROTO_TCP);
+            if (loop->raw_tcp < 0) {
+                error ("Fail to open a raw socket: %s", ERRMSG);
+                goto free_raw_ip;
+            }
+            if (setsockopt (loop->raw_tcp, IPPROTO_IP, IP_HDRINCL,
+                &zero, sizeof (zero)) < 0) {
+                error ("setsockopt IP_HDRINCL = 0: %s", ERRMSG);
+                goto free_raw_tcp;
+            }
+
             loop->pkts = g_hash_table_new_full (
                 g_direct_hash, g_direct_equal, NULL, packet_list_tcp_free);
-            break;
-        case FALGPROTO_TRANSPORT_UDP:
+            g_queue_init (&loop->raw_ip_q);
+            g_queue_init (&loop->raw_tcp_q);
+        } break;
+
+        case FALGPROTO_TRANSPORT_UDP: {
             loop->pkts = g_hash_table_new_full (
                 g_direct_hash, g_direct_equal, NULL, packet_list_udp_free);
-            break;
+        } break;
+
         default:
             error (
                 "UNEXPECTED ERROR: unknown transport layer protocol "
@@ -778,6 +868,19 @@ FalgnfqLoop* falgnfq_loop_new (FalgnfqConfig *config) {
     debug ("FalgnfqLoop new -> %p", loop);
 
     return loop;
+
+free_raw_tcp:
+    close (loop->raw_tcp);
+free_raw_ip:
+    close (loop->raw_ip);
+free_rng:
+    falgnfq_rng_free (loop->rng);
+free_loop:
+    free (loop);
+free_nl:
+    mnl_socket_close (nl);
+free_nothing:
+    return NULL;
 }
 
 int falgnfq_loop_run (FalgnfqLoop *loop) {
@@ -785,34 +888,108 @@ int falgnfq_loop_run (FalgnfqLoop *loop) {
     char pkt[loop->pkt_max];
 
     debug ("FalgnfqLoop %p run", loop);
+
+    enum {
+        POLL_NETLINK,
+        POLL_RAW_IP,
+        POLL_RAW_TCP,
+        POLL_MAX
+    };
+    struct pollfd fds[POLL_MAX] = {
+        [POLL_NETLINK] = { .fd = loop->nl_fd,   .events = POLLIN | POLLPRI },
+        [POLL_RAW_IP]  = { .fd = loop->raw_ip,  .events = POLLOUT },
+        [POLL_RAW_TCP] = { .fd = loop->raw_tcp, .events = POLLOUT }
+    };
+
 #ifndef NDEBUG
     while (!falgnfq_exit) {
 #else
     while (true) {
 #endif
-        debug ("FalgnfqLoop %p run: mnl_socket_recvfrom", loop);
-        ssize_t pkt_rval = mnl_socket_recvfrom (loop->nl, pkt, loop->pkt_max);
-        if (pkt_rval < 0) {
-            if (errno == ENOBUFS) {
-                warning ("mnl_socket_recvfrom: %s", ERRMSG);
-                continue;
-            } else if (errno == EINTR || errno == EWOULDBLOCK) {
-                debug ("FalnfqLoop %p: mnl_socket_recvfrom interrupted", loop);
+        // Prevent endless loops
+        if (g_queue_is_empty (&loop->raw_ip_q)) {
+            debug ("FalgnfqLoop %p run: disable raw IP socket", loop);
+            if (fds[POLL_RAW_IP].fd > 0) {
+                fds[POLL_RAW_IP].fd = - fds[POLL_RAW_IP].fd;
+            }
+        } else {
+            debug ("FalgnfqLoop %p run: enable raw IP socket", loop);
+            if (fds[POLL_RAW_IP].fd < 0) {
+                fds[POLL_RAW_IP].fd = - fds[POLL_RAW_IP].fd;
+            }
+        }
+
+        if (g_queue_is_empty (&loop->raw_tcp_q)) {
+            debug ("FalgnfqLoop %p run: disable raw TCP socket", loop);
+            if (fds[POLL_RAW_TCP].fd > 0) {
+                fds[POLL_RAW_TCP].fd = - fds[POLL_RAW_TCP].fd;
+            }
+        } else {
+            debug ("FalgnfqLoop %p run: enable raw TCP socket", loop);
+            if (fds[POLL_RAW_TCP].fd < 0) {
+                fds[POLL_RAW_TCP].fd = - fds[POLL_RAW_TCP].fd;
+            }
+        }
+
+        debug ("FalgnfqLoop %p run: poll", loop);
+        if (poll (fds, POLL_MAX, -1) < 0) {
+            if (errno == EINTR || errno == EWOULDBLOCK) {
+                debug ("FalnfqLoop %p run: poll interrupted", loop);
                 continue;
             } else {
-                error ("mnl_socket_recvfrom: %s", ERRMSG);
+                error ("poll: %s", ERRMSG);
                 return -1;
             }
         }
 
-        size_t pkt_len = (size_t)pkt_rval;
-        debug ("FalgnfqLoop %p run: mnl_cb_run", loop);
-        if (mnl_cb_run (pkt, pkt_len, 0, loop->portid, queue_cb, loop) < 0) {
-            error ("mnl_cb_run: %s", ERRMSG);
-            if_debug (1) {
-                error ("DEVELOPER_MODE: UNEXPECTED ERROR, EXIT NOW!");
-                return -1;
+        if (fds[POLL_NETLINK].revents & POLLIN ||
+            fds[POLL_NETLINK].revents & POLLPRI) {
+
+            debug ("FalgnfqLoop %p run: netlink socket is ready", loop);
+            debug ("FalgnfqLoop %p run: mnl_socket_recvfrom", loop);
+            ssize_t pkt_rval =
+                mnl_socket_recvfrom (loop->nl, pkt, loop->pkt_max);
+            if (pkt_rval < 0) {
+                if (errno == ENOBUFS) {
+                    warning ("mnl_socket_recvfrom: %s", ERRMSG);
+                    continue;
+                } else {
+                    error ("mnl_socket_recvfrom: %s", ERRMSG);
+                    return -1;
+                }
             }
+
+            size_t pkt_len = (size_t)pkt_rval;
+            debug ("FalgnfqLoop %p run: mnl_cb_run", loop);
+            if (mnl_cb_run (pkt, pkt_len, 0, loop->portid, queue_cb, loop) < 0) {
+                error ("mnl_cb_run: %s", ERRMSG);
+                if_debug (1) {
+                    error ("DEVELOPER_MODE: UNEXPECTED ERROR, EXIT NOW!");
+                    return -1;
+                }
+            }
+        }
+
+        if (fds[POLL_RAW_IP].revents & POLLOUT) {
+            debug ("FalgnfqLoop %p run: raw IP socket is ready", loop);
+        }
+
+        if (fds[POLL_RAW_TCP].revents & POLLOUT) {
+            debug ("FalgnfqLoop %p run: raw TCP socket is ready", loop);
+
+            QueuedPkt *qpkt = g_queue_pop_tail (&loop->raw_tcp_q);
+            if (sendto (loop->raw_tcp, qpkt->data, qpkt->len, 0,
+                SOCKADDR (&qpkt->addr), qpkt->addr_len) < 0) {
+
+                error ("sendto: %s", ERRMSG);
+                if_debug (1) {
+                    error ("DEVELOPER_MODE: UNEXPECTED ERROR, EXIT NOW!");
+                    free (qpkt);
+                    return -1;
+                }
+            }
+
+            free (qpkt);
         }
     }
 
@@ -823,5 +1000,16 @@ void falgnfq_loop_free (FalgnfqLoop *loop) {
     debug ("FalgnfqLoop %p free", loop);
     mnl_socket_close (loop->nl);
     g_hash_table_destroy (loop->pkts);
+    if (loop->proto.transport == FALGPROTO_TRANSPORT_TCP) {
+        falgnfq_rng_free (loop->rng);
+        close (loop->raw_ip);
+        close (loop->raw_tcp);
+        while (!g_queue_is_empty (&loop->raw_ip_q)) {
+            free (g_queue_pop_tail (&loop->raw_ip_q));
+        }
+        while (!g_queue_is_empty (&loop->raw_tcp_q)) {
+            free (g_queue_pop_tail (&loop->raw_tcp_q));
+        }
+    }
     free (loop);
 }

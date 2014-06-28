@@ -2,7 +2,6 @@
 #ifndef FALGNFQ_PRIVATE_H
 #define FALGNFQ_PRIVATE_H
 
-#include <stdint.h>
 #include <signal.h>
 #include <stdio.h>
 #include <string.h>
@@ -69,6 +68,9 @@ static inline char* errmsg (int errnum, char *errbuf, size_t errlen) {
 
 // Packet info
 
+#ifdef USE_PKT_INFO
+
+#include <stdint.h>
 #define PKT_INFO(x) ((struct pkt_info*)(x))
 
 struct pkt_buff;
@@ -76,7 +78,28 @@ typedef struct pkt_info {
     uint32_t            id;
     uint32_t            mark;
     struct pkt_buff*    pktb;
+    void*               network_header;
     void*               transport_header;
 } PktInfo;
+
+#endif // USE_PKT_INFO
+
+
+// TCP or IP packet in the sending queue
+
+#ifdef USE_QUEUED_PKT
+
+#include <stddef.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+
+typedef struct queued_pkt {
+    struct sockaddr_storage addr;
+    socklen_t               addr_len;
+    size_t                  len;
+    char                    data[];
+} QueuedPkt;
+
+#endif // USE_QUEUED_PKT
 
 #endif /* FALGNFQ_PRIVATE_H */
