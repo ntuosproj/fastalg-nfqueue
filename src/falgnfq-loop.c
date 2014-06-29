@@ -74,12 +74,89 @@ struct falgnfq_loop {
     GQueue              raw_tcp_q;  // (TCP only) raw TCP packet queue
 };
 
-/* We only process one transport layer protocol (TCP or UDP), so
- * using source port and destination port is enough. We encode
- * the source port and destination port into an integer, so memory
- * allocation for the hash key is not needed. */
-#define PACKET_KEY(sport,dport) \
-    GUINT_TO_POINTER ((unsigned int)(((uint32_t)dport) * 65536 + sport))
+static struct sockaddr* sockaddr_copy (struct sockaddr *addr) {
+    switch (addr->sa_family) {
+        case AF_INET: {
+            struct sockaddr_in *na = g_slice_new (struct sockaddr_in);
+            *na = *SOCKADDR_IN (addr);
+            return SOCKADDR (na);
+        }
+        case AF_INET6: {
+            struct sockaddr_in6 *na = g_slice_new (struct sockaddr_in6);
+            *na = *SOCKADDR_IN6 (addr);
+            return SOCKADDR (na);
+        }
+    }
+    return NULL;
+}
+
+static void sockaddr_free (void *addr) {
+    switch (SOCKADDR (addr)->sa_family) {
+        case AF_INET:
+            g_slice_free1 (sizeof (struct sockaddr_in), addr);
+            break;
+        case AF_INET6:
+            g_slice_free1 (sizeof (struct sockaddr_in6), addr);
+            break;
+    }
+}
+
+static unsigned int sockaddr_hash (const void *addr) {
+    switch (SOCKADDR (addr)->sa_family) {
+        case AF_INET: {
+            struct sockaddr_in *inaddr = SOCKADDR_IN (addr);
+            uint16_t port = inaddr->sin_port;
+            uint16_t *uint16 = (uint16_t*)&(inaddr->sin_addr.s_addr);
+            uint32_t host = (uint32_t)(uint16[0]) + uint16[1];
+            return (host << 16) + port;
+        }
+        case AF_INET6: {
+            struct sockaddr_in6 *in6addr = SOCKADDR_IN6 (addr);
+            uint16_t port = in6addr->sin6_port;
+            uint16_t *uint16 = (uint16_t*)(in6addr->sin6_addr.s6_addr);
+            uint32_t host = 0;
+            for (size_t i = 0; i < 8; i++) {
+                host += (uint32_t)(uint16[i]);
+            }
+            return (host << 16) + port;
+        }
+    }
+    return GPOINTER_TO_UINT (addr);
+}
+
+static inline int sockaddr_in_equal (
+    const struct sockaddr_in *a, const struct sockaddr_in *b) {
+
+    return a->sin_port == b->sin_port &&
+           a->sin_addr.s_addr == b->sin_addr.s_addr;
+}
+
+static inline int sockaddr_in6_equal (
+    const struct sockaddr_in6 *a, const struct sockaddr_in6 *b) {
+
+    return a->sin6_port == b->sin6_port &&
+           a->sin6_flowinfo == b->sin6_flowinfo &&
+           a->sin6_scope_id == b->sin6_scope_id &&
+           !memcmp (a->sin6_addr.s6_addr, b->sin6_addr.s6_addr, 16);
+}
+
+static int sockaddr_equal (const void *a, const void *b) {
+    const struct sockaddr *sa = a;
+    const struct sockaddr *sb = b;
+
+    if (sa->sa_family != sb->sa_family) {
+        return false;
+    }
+
+    switch (sa->sa_family) {
+        case AF_INET:
+            return sockaddr_in_equal (SOCKADDR_IN (sa), SOCKADDR_IN (sb));
+        case AF_INET6:
+            return sockaddr_in6_equal (SOCKADDR_IN6 (sa), SOCKADDR_IN6 (sb));
+    }
+
+    return false;
+}
 
 #define TRANSPORT_STATUS(x)  ((struct transport_status*)(x))
 #define TCP_STATUS(x)        ((struct tcp_status*)(x))
@@ -675,12 +752,12 @@ static int queue_cb (const struct nlmsghdr *nlh, void *loop_generic) {
                     abort ();
             }
 
-            key = PACKET_KEY (ntohs (th->source), ntohs (th->dest));
+            key = sockaddr_copy (SOCKADDR (&addr));
             FalgprotoPacket *list = g_hash_table_lookup (loop->pkts, key);
             if (list == NULL) {
                 list = packet_list_tcp_new (
                     &addr, addr_len, &loop->raw_ip_q, &loop->raw_tcp_q);
-                g_hash_table_insert (loop->pkts, key, list);
+                g_hash_table_replace (loop->pkts, key, list);
             }
 
             if (!tcp_inspect (loop, th, list, key, info, &verdict)) {
@@ -721,11 +798,11 @@ static int queue_cb (const struct nlmsghdr *nlh, void *loop_generic) {
                     abort ();
             }
 
-            key = PACKET_KEY (ntohs (uh->source), ntohs (uh->dest));
+            key = sockaddr_copy (SOCKADDR (&addr));
             FalgprotoPacket *list = g_hash_table_lookup (loop->pkts, key);
             if (list == NULL) {
                 list = packet_list_udp_new ();
-                g_hash_table_insert (loop->pkts, key, list);
+                g_hash_table_replace (loop->pkts, key, list);
             }
 
             if (!udp_inspect (loop, uh, list, key, info, &verdict)) {
@@ -848,14 +925,16 @@ FalgnfqLoop* falgnfq_loop_new (FalgnfqConfig *config) {
             }
 
             loop->pkts = g_hash_table_new_full (
-                g_direct_hash, g_direct_equal, NULL, packet_list_tcp_free);
+                sockaddr_hash, sockaddr_equal,
+                sockaddr_free, packet_list_tcp_free);
             g_queue_init (&loop->raw_ip_q);
             g_queue_init (&loop->raw_tcp_q);
         } break;
 
         case FALGPROTO_TRANSPORT_UDP: {
             loop->pkts = g_hash_table_new_full (
-                g_direct_hash, g_direct_equal, NULL, packet_list_udp_free);
+                sockaddr_hash, sockaddr_equal,
+                sockaddr_free, packet_list_udp_free);
         } break;
 
         default:
