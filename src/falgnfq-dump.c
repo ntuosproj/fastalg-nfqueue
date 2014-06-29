@@ -3,6 +3,7 @@
 #include<stdio.h>
 #include<sys/types.h>
 #include<sys/stat.h>
+#include<string.h>
 #include<unistd.h>
 
 #define MAX_PATH_LEN 200
@@ -20,15 +21,12 @@ int falgnfq_dump_payload(
 	const char* filename,  const char* payload, uint16_t len){
 
 	uint16_t dumped = 0;
-	char dump_file_path[ MAX_PATH_LEN ] = {0};
-	char dump_dir_path[ MAX_PATH_LEN ] = {0};
+	char dump_file_path[ strlen(filename) + 30 ];
+	char dump_dir_path[] = "falgnfq-dump-dir";
 	char buf[50] = {0};
 	char buf_offset = 0;
 	char current_byte;
 	int i = 0, j = 0;
-
-
-	sprintf(dump_dir_path, "./%s", "falgnfq-dump-dir");
 
 	//create a dir "falgnfq-dump-dir" under current working directory
 	struct stat st = {0};
@@ -52,7 +50,7 @@ int falgnfq_dump_payload(
 			if( i == 3 ){
 				buf[ buf_offset + 8 ] = '\n';
 				buf[ buf_offset + 9 ] = '\0';
-				fprintf( fp , "%s", buf );
+				fputs( buf, fp );
 			}else{
 				//There is a space between every two bytes in the same line.
 				buf[ buf_offset + 8 ] = ' ';
