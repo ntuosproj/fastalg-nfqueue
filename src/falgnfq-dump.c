@@ -28,9 +28,7 @@ int falgnfq_dump_payload(
 	int i = 0, j = 0;
 
 
-	char cwd[ MAX_PATH_LEN ] = {0};
-	getcwd(cwd, MAX_PATH_LEN - 1 );
-	sprintf(dump_dir_path, "%s/%s", cwd, "falgnfq-dump-dir");
+	sprintf(dump_dir_path, "./%s", "falgnfq-dump-dir");
 
 	//create a dir "falgnfq-dump-dir" under current working directory
 	struct stat st = {0};
