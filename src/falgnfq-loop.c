@@ -1065,7 +1065,7 @@ int falgnfq_loop_run (FalgnfqLoop *loop) {
         if (fds[POLL_RAW_TCP].revents & POLLOUT) {
             debug ("FalgnfqLoop %p run: raw TCP socket is ready", loop);
 
-            QueuedPkt *qpkt = g_queue_pop_tail (&loop->raw_tcp_q);
+            QueuedPkt *qpkt = g_queue_pop_head (&loop->raw_tcp_q);
             if (sendto (loop->raw_tcp, qpkt->data, qpkt->len, 0,
                 SOCKADDR (&qpkt->addr), qpkt->addr_len) < 0) {
 
